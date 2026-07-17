@@ -1,0 +1,1 @@
+{"caption": "Reward per episode during PPO training", "description": "Line chart showing raw and smoothed reward across episodes encountered while training, not evaluation."}

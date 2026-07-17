@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from gymnasium.envs.mujoco.inverted_pendulum_v5 import InvertedPendulumEnv
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
+from stable_baselines3.common.monitor import load_results
 
 
 # ── Same custom env as before ──
@@ -131,4 +132,86 @@ with open("pole_angle_trajectories.png.meta.json", "w") as f:
     json.dump({
         "caption": "Pole angle trajectories for episodes 1 to 3",
         "description": "Line chart showing pole angle in degrees across timesteps for the first three evaluation episodes."
+    }, f)
+
+# ── Plot 0: training reward curve (requires Monitor wrapper used during training) ──
+df_train = load_results("./training_logs/")
+df_train["episode"] = range(len(df_train))
+df_train["r_smoothed"] = df_train["r"].rolling(20, min_periods=1).mean()
+
+fig0 = go.Figure()
+fig0.add_trace(go.Scatter(
+    x=df_train["episode"], y=df_train["r"],
+    mode="lines", name="Raw reward", opacity=0.3
+))
+fig0.add_trace(go.Scatter(
+    x=df_train["episode"], y=df_train["r_smoothed"],
+    mode="lines", name="Smoothed (20-ep rolling mean)"
+))
+fig0.update_layout(
+    title={
+        "text": "Training reward per episode<br><span style='font-size: 18px; font-weight: normal;'>Reward should trend toward zero as the policy learns</span>"
+    }
+)
+fig0.update_xaxes(title_text="Episode (during training)")
+fig0.update_yaxes(title_text="Reward")
+fig0.write_image("training_reward.png")
+
+with open("training_reward.png.meta.json", "w") as f:
+    json.dump({
+        "caption": "Reward per episode during PPO training",
+        "description": "Line chart showing raw and smoothed reward across episodes encountered while training, not evaluation."
+    }, f)
+
+# ── Plot 0b: episode length and per-step reward during training ──
+df_train["reward_per_step"] = df_train["r"] / df_train["l"]
+df_train["l_smoothed"] = df_train["l"].rolling(20, min_periods=1).mean()
+df_train["reward_per_step_smoothed"] = df_train["reward_per_step"].rolling(20, min_periods=1).mean()
+
+fig0b = go.Figure()
+fig0b.add_trace(go.Scatter(
+    x=df_train["episode"], y=df_train["l"],
+    mode="lines", name="Episode length (raw)", opacity=0.3
+))
+fig0b.add_trace(go.Scatter(
+    x=df_train["episode"], y=df_train["l_smoothed"],
+    mode="lines", name="Episode length (smoothed)"
+))
+fig0b.update_layout(
+    title={
+        "text": "Episode length during training<br><span style='font-size: 18px; font-weight: normal;'>Longer episodes may explain a more negative total reward</span>"
+    }
+)
+fig0b.update_xaxes(title_text="Episode (during training)")
+fig0b.update_yaxes(title_text="Steps per episode")
+fig0b.write_image("training_episode_length.png")
+
+with open("training_episode_length.png.meta.json", "w") as f:
+    json.dump({
+        "caption": "Episode length per episode during PPO training",
+        "description": "Line chart of raw and smoothed episode length across training episodes."
+    }, f)
+
+fig0c = go.Figure()
+fig0c.add_trace(go.Scatter(
+    x=df_train["episode"], y=df_train["reward_per_step"],
+    mode="lines", name="Reward per step (raw)", opacity=0.3
+))
+fig0c.add_trace(go.Scatter(
+    x=df_train["episode"], y=df_train["reward_per_step_smoothed"],
+    mode="lines", name="Reward per step (smoothed)"
+))
+fig0c.update_layout(
+    title={
+        "text": "Mean reward per step during training<br><span style='font-size: 18px; font-weight: normal;'>Normalizes for episode length to show true balancing quality</span>"
+    }
+)
+fig0c.update_xaxes(title_text="Episode (during training)")
+fig0c.update_yaxes(title_text="Reward per step")
+fig0c.write_image("training_reward_per_step.png")
+
+with open("training_reward_per_step.png.meta.json", "w") as f:
+    json.dump({
+        "caption": "Mean reward per step per episode during PPO training",
+        "description": "Line chart showing total reward divided by episode length, normalizing for episode duration."
     }, f)
