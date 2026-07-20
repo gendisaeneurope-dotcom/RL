@@ -1,0 +1,1 @@
+{"caption": "Mean reward per step per episode during 4-DOF PPO training", "description": "Line chart showing total reward divided by episode length, normalizing for episode duration."}

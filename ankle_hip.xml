@@ -1,0 +1,33 @@
+<mujoco model="ankle_hip">
+  <compiler inertiafromgeom="true" coordinate="local"/>
+  <option timestep="0.02" gravity="0 0 -9.81" integrator="RK4"/>
+
+  <default>
+    <joint armature="0" damping="1" limited="false"/>
+    <geom contype="0" conaffinity="0" friction="1 0.1 0.1" rgba="0.7 0.7 0 1"/>
+  </default>
+
+  <worldbody>
+    <!-- ground plane for reference -->
+    <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" rgba="0.9 0.9 0.9 1"/>
+
+    <!-- ankle: fixed base joint, rotates lower segment (legs) -->
+    <body name="lower_segment" pos="0 0 0">
+      <joint name="ankle" type="hinge" pos="0 0 0" axis="0 1 0" damping="1"/>
+      <geom name="lower_geom" type="capsule" fromto="0 0 0 0 0 0.5" size="0.045" rgba="0.2 0.4 0.9 1"/>
+      <inertial pos="0 0 0.25" mass="30" diaginertia="1.5 1.5 0.1"/>
+
+      <!-- hip: second joint at top of lower segment, rotates upper segment (trunk) -->
+      <body name="upper_segment" pos="0 0 0.5">
+        <joint name="hip" type="hinge" pos="0 0 0" axis="0 1 0" damping="1"/>
+        <geom name="upper_geom" type="capsule" fromto="0 0 0 0 0 0.6" size="0.06" rgba="0.9 0.3 0.2 1"/>
+        <inertial pos="0 0 0.3" mass="40" diaginertia="2.0 2.0 0.15"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="ankle_motor" joint="ankle" gear="300" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor name="hip_motor" joint="hip" gear="300" ctrlrange="-1 1" ctrllimited="true"/>
+  </actuator>
+</mujoco>
