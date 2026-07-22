@@ -134,7 +134,7 @@ fig1.add_trace(go.Scatter(
 ))
 fig1.update_layout(
     title={
-        "text": "Episode reward (20 eval eps)<br><span style='font-size: 18px; font-weight: normal;'>Custom reward stays near zero and highly consistent</span>"
+        "text": "Episode reward (20 eval eps)<br><span style='font-size: 18px; font-weight: normal;'>Custom reward stays high and highly consistent</span>"
     }
 )
 fig1.update_xaxes(title_text="Episode")
@@ -191,7 +191,7 @@ fig0.add_trace(go.Scatter(
 ))
 fig0.update_layout(
     title={
-        "text": "Training reward per episode<br><span style='font-size: 18px; font-weight: normal;'>Reward should trend toward zero as the policy learns</span>"
+        "text": "Training reward per episode<br><span style='font-size: 18px; font-weight: normal;'>Reward should increase and stabilize near its maximum as the policy learns</span>"
     }
 )
 fig0.update_xaxes(title_text="Episode (during training)")
