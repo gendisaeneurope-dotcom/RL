@@ -1,4 +1,6 @@
 import os
+
+import mujoco
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import gymnasium as gym
@@ -10,14 +12,14 @@ from gymnasium import spaces
 import numpy as np
 
 
-# ── Load custom 4-DOF ankle-hip model via xml_file ──
 xml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ankle_knee_hip_trunk.xml")
 _base_env = gym.make("InvertedPendulum-v5", xml_file=xml_path).unwrapped
 AnkleKneeHipTrunkEnv = type(_base_env)
 
 JOINT_NAMES = ["ankle", "knee", "hip", "trunk"]
 N_JOINTS = 4
-ANGLE_LIMIT = 0.4  # rad, matches trunk's tighter joint range (most restrictive)
+JOINT_LIMITS = np.array([0.5, 0.5, 0.5, 0.4])
+
 
 class My4DOFEnv(AnkleKneeHipTrunkEnv):
     def __init__(self, disturb_prob=0.0, force_range=(-20, 20), omega=0.1, **kwargs):
@@ -30,10 +32,15 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
         self.force_range = force_range
         self.omega = omega
         self.trunk_body_id = self.model.body("trunk").id
+        self.root_body_id = self.model.body("foot").id
 
     def reset(self, **kwargs):
         self._current_step = 0
-        return super().reset(**kwargs)
+        obs, info = super().reset(**kwargs)
+        self.data.qpos[:N_JOINTS] *= 0.1
+        self.data.qvel[:N_JOINTS] *= 0.1
+        mujoco.mj_forward(self.model, self.data)
+        return self._get_obs(), info
 
     def _get_obs(self):
         angles = self.data.qpos[:N_JOINTS].copy()
@@ -43,7 +50,6 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
     def step(self, action):
         if self.disturb_prob > 0 and np.random.rand() < self.disturb_prob:
             force = np.random.uniform(*self.force_range)
-            # apply to trunk body (last body in the chain)
             self.data.xfrc_applied[self.trunk_body_id, 0] = force
         else:
             self.data.xfrc_applied[self.trunk_body_id, 0] = 0.0
@@ -54,56 +60,78 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
 
         failed = bool(
             not np.isfinite(observation).all()
-            or np.any(np.abs(angles) > ANGLE_LIMIT)
+            or np.any(np.abs(angles) > JOINT_LIMITS)
         )
 
-        h = np.mean(np.cos(angles))  # average upright measure across all 4 joints
-
         self._current_step += 1
-        success = (self._current_step >= self._max_steps) and not failed
+        terminated = failed
 
-        if success:
-            reward = 1000.0
-            terminated = True
-        elif failed:
-            reward = -100.0 - 400.0 * (1.0 - h)
-            terminated = True
-        else:
-            effort = np.sum(np.square(action))
-            reward = h - self.omega * effort
-            terminated = False
+        if failed:
+            print(f"Step {self._current_step}, angles(deg): {np.degrees(angles)}, disturb_prob: {self.disturb_prob}")
+
+        com_pos = self.data.subtree_com[self.root_body_id][:2]
+        base_center = np.array([0.0, 0.0])
+
+        w1, w2 = 1.0, 0.01
+        position_term = -w1 * np.sum((com_pos - base_center) ** 2)
+        effort_term = -w2 * np.sum(np.square(action))
+
+        ankle_idx, hip_idx = 0, 2
+        coordination_bonus = -0.1 * (angles[hip_idx] - 3.0 * angles[ankle_idx]) ** 2
+        reward = position_term + effort_term + coordination_bonus + 0.1
 
         info = {"reward_survive": reward}
         if self.render_mode == "human":
             self.render()
         return observation, reward, terminated, False, info
 
+
 if __name__ == "__main__":
-# ── Training ──
     log_dir = "./training_logs_4dof/"
     os.makedirs(log_dir, exist_ok=True)
 
     env = TimeLimit(My4DOFEnv(), max_episode_steps=1000)
     env = Monitor(env, log_dir)
 
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./tb_logs_4dof/")
-    model.learn(total_timesteps=500_000)
+    model = PPO(
+        "MlpPolicy", env,
+        n_steps=2048,
+        batch_size=256,
+        ent_coef=0.01,
+        learning_rate=3e-4,
+        gamma=0.99,
+        verbose=1,
+    )
+
+    # ── Curriculum loop ──
+    stages = [
+        {"disturb_prob": 0.0, "timesteps": 100_000},
+        {"disturb_prob": 0.05, "timesteps": 150_000},
+        {"disturb_prob": 0.15, "timesteps": 150_000},
+        {"disturb_prob": 0.3, "timesteps": 100_000},
+    ]
+
+    for stage in stages:
+        env.unwrapped.disturb_prob = stage["disturb_prob"]
+        model.learn(total_timesteps=stage["timesteps"], reset_num_timesteps=False)
+        print(f"Finished stage disturb_prob={stage['disturb_prob']}, "
+              f"env reports: {env.unwrapped.disturb_prob}")
+        model.save(f"ppo_ankle_knee_hip_trunk_disturb_{stage['disturb_prob']}")
+
     model.save("ppo_ankle_knee_hip_trunk")
     env.close()
 
-
-    # ── Evaluation with rendering (quick visual check) ──
+    # ── Evaluation with rendering ──
     model = PPO.load("ppo_ankle_knee_hip_trunk")
     env = TimeLimit(My4DOFEnv(render_mode="human"), max_episode_steps=1000)
     obs, info = env.reset()
 
     for _ in range(1000):
-         action, _ = model.predict(obs, deterministic=True)
-         obs, reward, terminated, truncated, info = env.step(action)
-         if terminated or truncated:
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, terminated, truncated, info = env.step(action)
+        if terminated or truncated:
             obs, info = env.reset()
     env.close()
-
 
     # ── Quantitative evaluation ──
     eval_env = TimeLimit(My4DOFEnv(), max_episode_steps=1000)
@@ -116,3 +144,24 @@ if __name__ == "__main__":
 
     print(f"\nMean reward: {np.mean(episode_rewards):.2f} +/- {np.std(episode_rewards):.2f}")
     eval_env.close()
+
+    # ── Debug: zero-action survival + angle logging ──
+    debug_env = My4DOFEnv()
+    obs, info = debug_env.reset()
+    print("Initial angles (deg):", np.degrees(obs[:N_JOINTS]))
+
+    angle_log = []
+    obs, info = debug_env.reset()
+    for step in range(500):
+        action = np.zeros(N_JOINTS)
+        obs, reward, terminated, truncated, info = debug_env.step(action)
+        angles_deg = np.degrees(debug_env.data.qpos[:N_JOINTS])
+        angle_log.append([step, *angles_deg])
+        if terminated or truncated:
+            print(f"Terminated at step {step}, angles: {angles_deg}")
+            break
+    else:
+        print("Survived 500 steps with zero action")
+
+    angle_log = np.array(angle_log)
+    debug_env.close()
