@@ -1,5 +1,5 @@
 import mujoco
-m = mujoco.MjModel.from_xml_path("ankle_knee_hip_trunk.xml")
+m = mujoco.MjModel.from_xml_path("postural_4DoF.xml")
 print(m.nu, m.nbody, [m.body(i).name for i in range(m.nbody)])
 
 import pandas as pd

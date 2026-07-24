@@ -5,7 +5,7 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-xml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ankle_knee_hip_trunk.xml")
+xml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "postural_4DoF.xml")
 
 model = mujoco.MjModel.from_xml_path(xml_path)
 data = mujoco.MjData(model)

@@ -1,6 +1,8 @@
 import os
 
 import mujoco
+
+from RL_4DoF_target import My4DOFTargetEnv
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import gymnasium as gym
@@ -12,16 +14,22 @@ from gymnasium import spaces
 import numpy as np
 
 
-xml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ankle_knee_hip_trunk.xml")
+xml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ankle_hip_2x2dof.xml")
 _base_env = gym.make("InvertedPendulum-v5", xml_file=xml_path).unwrapped
-AnkleKneeHipTrunkEnv = type(_base_env)
+AnkleHipEnv = type(_base_env)
 
-JOINT_NAMES = ["ankle", "knee", "hip", "trunk"]
+# Real joint names from the verified URDF-derived model (subject3, scaled).
+# Order: subtalar (ankle eversion/inversion) -> ankle (flexion) -> hip_rotation2 (abduction) -> hip_rotation1 (flexion)
+JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"]
 N_JOINTS = 4
-JOINT_LIMITS = np.array([0.5, 0.5, 0.5, 0.4])
+
+# NOTE: unlike the old placeholder model, these ranges are NOT symmetric.
+# Verified directly from the URDF via MuJoCo (see joint.range), in radians.
+JOINT_LOW = np.array([-0.3, -0.5, -0.5, -0.5])
+JOINT_HIGH = np.array([ 0.3,  0.5,  0.5,  0.5])
 
 
-class My4DOFEnv(AnkleKneeHipTrunkEnv):
+class My4DOFEnv(AnkleHipEnv):
     def __init__(self, disturb_prob=0.0, force_range=(-20, 20), omega=0.1, **kwargs):
         super().__init__(xml_file=xml_path, **kwargs)
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(N_JOINTS,), dtype=np.float32)
@@ -31,7 +39,15 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
         self.disturb_prob = disturb_prob
         self.force_range = force_range
         self.omega = omega
+
+        # Disturbance applied to the topmost consolidated segment (pelvis+torso, the
+        # real analogue of the old "trunk" body). This is NOT the same body name as
+        # before -- verify with a name lookup rather than assuming.
         self.trunk_body_id = self.model.body("trunk").id
+
+        # "world" is the model root. The fixed foot geometry was merged into it by
+        # MuJoCo's URDF compiler (since it's rigidly fixed, not a free body), so
+        # subtree_com of "world" already gives the CoM of the entire moving chain.
         self.root_body_id = self.model.body("foot").id
 
     def reset(self, **kwargs):
@@ -58,9 +74,13 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
         observation = self._get_obs()
         angles = observation[:N_JOINTS]
 
+        # Asymmetric range check -- the old np.abs(angles) > JOINT_LIMITS check is
+        # WRONG for this model (hip_c_rotation1 alone is -0.524 to +2.094, not
+        # symmetric). Check lower/upper bounds separately.
         failed = bool(
             not np.isfinite(observation).all()
-            or np.any(np.abs(angles) > JOINT_LIMITS)
+            or np.any(angles < JOINT_LOW)
+            or np.any(angles > JOINT_HIGH)
         )
 
         self._current_step += 1
@@ -69,6 +89,8 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
         if failed:
             print(f"Step {self._current_step}, angles(deg): {np.degrees(angles)}, disturb_prob: {self.disturb_prob}")
 
+        # CoM of the entire moving chain (world subtree = everything, since foot
+        # is rigidly fixed and merged into world already).
         com_pos = self.data.subtree_com[self.root_body_id][:2]
         base_center = np.array([0.0, 0.0])
 
@@ -76,9 +98,10 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
         position_term = -w1 * np.sum((com_pos - base_center) ** 2)
         effort_term = -w2 * np.sum(np.square(action))
 
-        ankle_idx, hip_idx = 0, 2
-        coordination_bonus = -0.1 * (angles[hip_idx] - 3.0 * angles[ankle_idx]) ** 2
-        reward = position_term + effort_term + coordination_bonus + 0.1
+        # NOTE: the old ankle-hip coordination term (hardcoded 3:1 ratio) has been
+        # REMOVED here, per supervisor feedback -- it was an unjustified constant
+        # and effort_term already penalizes uncoordinated/wasteful action.
+        reward = position_term + effort_term + 0.1
 
         info = {"reward_survive": reward}
         if self.render_mode == "human":
@@ -87,10 +110,10 @@ class My4DOFEnv(AnkleKneeHipTrunkEnv):
 
 
 if __name__ == "__main__":
-    log_dir = "./training_logs_4dof/"
+    log_dir = "./training_logs_4dof_v2/"
     os.makedirs(log_dir, exist_ok=True)
 
-    env = TimeLimit(My4DOFEnv(), max_episode_steps=1000)
+    env = TimeLimit(My4DOFEnv(render_mode="human"), max_episode_steps=1000)
     env = Monitor(env, log_dir)
 
     model = PPO(
@@ -103,7 +126,7 @@ if __name__ == "__main__":
         verbose=1,
     )
 
-    # ── Curriculum loop ──
+    # -- Curriculum loop --
     stages = [
         {"disturb_prob": 0.0, "timesteps": 100_000},
         {"disturb_prob": 0.05, "timesteps": 150_000},
@@ -116,13 +139,13 @@ if __name__ == "__main__":
         model.learn(total_timesteps=stage["timesteps"], reset_num_timesteps=False)
         print(f"Finished stage disturb_prob={stage['disturb_prob']}, "
               f"env reports: {env.unwrapped.disturb_prob}")
-        model.save(f"ppo_ankle_knee_hip_trunk_disturb_{stage['disturb_prob']}")
+        model.save(f"ppo_ankle_hip_disturb_{stage['disturb_prob']}")
 
-    model.save("ppo_ankle_knee_hip_trunk")
+    model.save("ppo_ankle_hip")
     env.close()
 
-    # ── Evaluation with rendering ──
-    model = PPO.load("ppo_ankle_knee_hip_trunk")
+    # -- Evaluation with rendering --
+    model = PPO.load("ppo_ankle_hip")
     env = TimeLimit(My4DOFEnv(render_mode="human"), max_episode_steps=1000)
     obs, info = env.reset()
 
@@ -133,19 +156,21 @@ if __name__ == "__main__":
             obs, info = env.reset()
     env.close()
 
-    # ── Quantitative evaluation ──
-    eval_env = TimeLimit(My4DOFEnv(), max_episode_steps=1000)
+    # -- Quantitative evaluation (Monitor-wrapped to silence SB3's warning and get
+    # accurate episode stats) --
+    eval_env = TimeLimit(My4DOFEnv(disturb_prob=1.0, force_range=(-100, 100)), max_episode_steps=1000)
+    eval_env = Monitor(eval_env)
 
     episode_rewards, episode_lengths = evaluate_policy(
         model, eval_env, n_eval_episodes=20, return_episode_rewards=True
     )
     for i, (r, l) in enumerate(zip(episode_rewards, episode_lengths)):
-        print(f"Episode {i+1}: reward={r:.1f}, length={l}")
+        print(f"Episode {i+1}: reward={r:.4f}, length={l}")
 
-    print(f"\nMean reward: {np.mean(episode_rewards):.2f} +/- {np.std(episode_rewards):.2f}")
+    print(f"\nMean reward: {np.mean(episode_rewards):.4f} +/- {np.std(episode_rewards):.4f}")
     eval_env.close()
 
-    # ── Debug: zero-action survival + angle logging ──
+    # -- Debug: zero-action survival + angle logging --
     debug_env = My4DOFEnv()
     obs, info = debug_env.reset()
     print("Initial angles (deg):", np.degrees(obs[:N_JOINTS]))
