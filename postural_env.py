@@ -48,32 +48,41 @@ TARGET_RANGE = 0.03                   # see diagnose.py: 0.05 is 79% of the
                                       # actuator ceiling, 0.03 is 48%
 OMEGA = 0.2                           # carried over from candidate 1
 SHAPING_WEIGHT = 20.0                 # carried over from candidate 1
-ND_CAP = 4.0                          # soft bound on norm_dist used for h
+ND_CAP = 1.0                          # bound on norm_dist used for h and in
+                                      # EC_omega. Was 4.0 -- EF_u (naturally in
+                                      # [0,1], since actions are in [-1,1])
+                                      # and the tracking-error term should
+                                      # both lie in [-1,1]. Capping at 4 let
+                                      # this term reach 4x the scale of
+                                      # effort, silently defeating the
+                                      # single-omega weighting. This also
+                                      # fixes the failure-branch magnitude:
+                                      # with cap=4, (1-h) could reach 4,
+                                      # giving penalties down to -1700
+                                      # instead of the paper's -100 to -500.
 
 VEL_SCALE = 2.0                       # rough obs normalisation constants
-SUCCESS_BONUS = 1000.0
+SUCCESS_BONUS = 2.0     # was 1000 -- now paid every step in-zone, so 1000x dwarfed effort/limits entirely. Scaled to be comparable to the ordinary h~[0,1] reward instead.
 FAIL_BASE = -100.0
 FAIL_SLOPE = -400.0
 
-# --- Success/failure band, see reward_spec.md section 4 -------------------
-# EPS_POS/EPS_VEL history:
-#   1st guess: 2mm / 0.01 m/s (invented, no source)
-#   2nd pass:  4mm / 0.05 m/s (derived from real_trials data -- real subjects
-#              never truly stop swaying, so these matched real "still counts
-#              as in-target" behavior)
-#   REVERTED back to 2mm / 0.01 m/s: real training comparison showed the
-#   looser (real-data) thresholds let the policy satisfy "success" while
-#   still oscillating -- mean error rose 0.75mm->1.68mm, a new joint-limit
-#   failure appeared (0/13->1/13), and the front-back idle joints oscillated
-#   up to 72% of their limit (worsening over the episode) vs. staying calm
-#   under the tighter band. Being faithful to real human sway tolerance is
-#   not the same as being a good training target for this controller --
-#   the tighter, "come to rest" band produces the better-behaved policy.
-EPS_POS = 0.002     # m
-EPS_VEL = 0.01      # m/s
-SUCCESS_HOLD_STEPS = 20   # still a placeholder -- not derivable from the
-                    # real data (no target column to define proximity-
-                    # duration from)
+# EPS_POS: confirmed the real experimental target radius was 5mm
+# -- using that directly now instead of my earlier derived/guessed values
+# (2mm invented, then 4mm from real_trials data, both superseded).
+#
+# EPS_VEL: still not sourced. feedback addressed the position
+# radius but not a velocity number. Keeping the earlier 0.01 m/s as a
+# placeholder pending an actual value -- not presenting it as resolved.
+#
+# SUCCESS_HOLD_STEPS removed entirely: feedback was explicit that success
+# should NOT be based on how many steps the model holds position -- it's an
+# instantaneous test (in the band right now), not a sustained-hold test.
+# The hold-counter mechanism (added earlier this session, my own invention)
+# is gone; this was likely also the cause of inconsistent episode lengths
+# across runs, since a hold-based success fires at an arbitrary point after
+# first reaching the band rather than the moment it's actually reached.
+EPS_POS = 0.005     # m (real experimental target radius)
+EPS_VEL = 0.01      # m/s -- still a placeholder, not sourced
 
 
 import json
@@ -102,8 +111,7 @@ class PosturalEnv(AnkleHipEnv):
                  disturb_prob=0.0, force_range=(-20, 20),
                  perturb_vel_gain=0.0, perturb_max_force=100.0,
                  use_shaping=False,
-                 eps_pos=EPS_POS, eps_vel=EPS_VEL,
-                 success_hold_steps=SUCCESS_HOLD_STEPS, **kwargs):
+                 eps_pos=EPS_POS, eps_vel=EPS_VEL, **kwargs):
         # use_shaping defaults OFF: the paper's EC_omega has exactly two
         # terms (EF_u, -COM_x) convex-combined -- shaping_bonus has no
         # counterpart in the equation image. Set True to re-enable it as an
@@ -123,8 +131,6 @@ class PosturalEnv(AnkleHipEnv):
         self.nd_cap = float(nd_cap)
         self.eps_pos = float(eps_pos)
         self.eps_vel = float(eps_vel)
-        self.success_hold_steps = int(success_hold_steps)
-        self._hold_counter = 0
         self.disturb_prob = disturb_prob
         self.force_range = force_range
         # Continuous, CoM-velocity-proportional anterior perturbation,
@@ -204,7 +210,6 @@ class PosturalEnv(AnkleHipEnv):
         self.prev_com_y = com_y
         self.prev_com_x = self._com_x()
         self.prev_com_x_dot = 0.0
-        self._hold_counter = 0
         return self._get_obs(), info
 
     # ------------------------------------------------------------------
@@ -319,37 +324,27 @@ class PosturalEnv(AnkleHipEnv):
         nd = min(norm_dist_raw, self.nd_cap)
         h = 1.0 - nd
 
-        # Success now requires being IN the target band (position AND
-        # velocity), held for success_hold_steps consecutive steps -- not
-        # just "reached max_steps without falling". Fixes the bug where a
-        # policy could be moving fast through the target region at episode
-        # end and still collect the full success bonus. See reward_spec.md
-        # section 4 -- eps_pos/eps_vel/success_hold_steps are placeholders,
-        # not values taken from the paper.
-        in_band = (abs(com_y - self.target_y) < self.eps_pos) and (abs(com_y_dot) < self.eps_vel)
-        if in_band and not failed:
-            self._hold_counter += 1
-        else:
-            self._hold_counter = 0
-        success = (self._hold_counter >= self.success_hold_steps) and not failed
-        # NOTE (changed after seeing real training data): previously treated
-        # "ran out of steps without ever entering the success band" as a
-        # failure, using the same harsh -100-400(1-h) formula. Real eval
-        # showed this punished policies that were stable and only 5-8mm off
-        # target -- nowhere near a fall -- as if they'd fallen. That's an
-        # invented case (the paper's equation doesn't define it at all), so
-        # it no longer gets a special penalty: if it's not success and not a
-        # joint-limit failure, it just falls through to the ordinary
-        # per-step reward below, and the TimeLimit wrapper truncates it
-        # normally. Being "close but not in a mm-tight band" is now
-        # expensive only through the normal per-step h/EC terms, not through
-        # an extra terminal punishment.
+        # Success is still the instantaneous position+velocity test your
+        # supervisor specified -- that part doesn't change. What changes:
+        # it no longer ends the episode. A one-shot terminal bonus gave the
+        # model zero training signal for what to do AFTER reaching the
+        # zone -- confirmed by testing: forcing rollouts to continue past
+        # first success showed the policy drifting or destabilizing, not
+        # holding position, because it was never rewarded for staying.
+        # Now: being in the zone pays out every step you're in it, episode
+        # keeps running (only a real fall ends it early). This also matches
+        # the real task, which scores continuous proximity over time, not
+        # a single touch-and-done event.
+        success = (abs(com_y - self.target_y) < self.eps_pos
+                   and abs(com_y_dot) < self.eps_vel
+                   and not failed)
 
-        if success:
-            reward, terminated = SUCCESS_BONUS, True
-        elif failed:
+        if failed:
             reward = FAIL_BASE + FAIL_SLOPE * (1.0 - h)
             terminated = True
+        elif success:
+            reward = SUCCESS_BONUS
+            terminated = False
         else:
             ef_u = float(np.mean(np.square(action)))
             ec_omega = self.omega * ef_u + (1.0 - self.omega) * nd

@@ -41,6 +41,7 @@ def main():
     venv = DummyVecEnv([lambda: TimeLimit(
         PosturalEnv(mode=cfg["mode"], safety=cfg["safety"], safety_weight=0.0,
                    fixed_target=target, disturb_prob=a.prob, force_range=force_range,
+                   use_shaping=cfg.get("use_shaping", False),
                    render_mode="human"),
         max_episode_steps=1000)])
     venv = VecNormalize.load(f"{a.run_dir}/vecnormalize.pkl", venv)
