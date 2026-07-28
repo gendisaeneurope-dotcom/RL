@@ -29,7 +29,7 @@ def run(run_dir, n_grid=11):
     for t in targets:
         venv = DummyVecEnv([lambda t=t: TimeLimit(
             PosturalEnv(mode=cfg["mode"], safety=cfg["safety"], safety_weight=0.0,
-                       fixed_target=t),
+                       fixed_target=t, use_shaping=cfg.get("use_shaping", False)),
             max_episode_steps=1000)])
         venv = VecNormalize.load(f"{run_dir}/vecnormalize.pkl", venv)
         venv.training = False; venv.norm_reward = False

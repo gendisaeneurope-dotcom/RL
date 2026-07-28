@@ -55,6 +55,26 @@ SUCCESS_BONUS = 1000.0
 FAIL_BASE = -100.0
 FAIL_SLOPE = -400.0
 
+# --- Success/failure band, see reward_spec.md section 4 -------------------
+# EPS_POS/EPS_VEL history:
+#   1st guess: 2mm / 0.01 m/s (invented, no source)
+#   2nd pass:  4mm / 0.05 m/s (derived from real_trials data -- real subjects
+#              never truly stop swaying, so these matched real "still counts
+#              as in-target" behavior)
+#   REVERTED back to 2mm / 0.01 m/s: real training comparison showed the
+#   looser (real-data) thresholds let the policy satisfy "success" while
+#   still oscillating -- mean error rose 0.75mm->1.68mm, a new joint-limit
+#   failure appeared (0/13->1/13), and the front-back idle joints oscillated
+#   up to 72% of their limit (worsening over the episode) vs. staying calm
+#   under the tighter band. Being faithful to real human sway tolerance is
+#   not the same as being a good training target for this controller --
+#   the tighter, "come to rest" band produces the better-behaved policy.
+EPS_POS = 0.002     # m
+EPS_VEL = 0.01      # m/s
+SUCCESS_HOLD_STEPS = 20   # still a placeholder -- not derivable from the
+                    # real data (no target column to define proximity-
+                    # duration from)
+
 
 import json
 
@@ -66,7 +86,7 @@ def load_run_config(run_dir):
     if os.path.exists(path):
         with open(path) as f:
             return json.load(f)
-    return {"mode": "target", "safety": "none", "weight": 0.0}
+    return {"mode": "target", "safety": "none", "weight": 0.0, "use_shaping": False}
 
 
 class PosturalEnv(AnkleHipEnv):
@@ -79,7 +99,15 @@ class PosturalEnv(AnkleHipEnv):
     def __init__(self, mode="target", safety="none", safety_weight=0.0,
                  target_range=TARGET_RANGE, fixed_target=None, omega=OMEGA,
                  shaping_weight=SHAPING_WEIGHT, nd_cap=ND_CAP,
-                 disturb_prob=0.0, force_range=(-20, 20), **kwargs):
+                 disturb_prob=0.0, force_range=(-20, 20),
+                 perturb_vel_gain=0.0, perturb_max_force=100.0,
+                 use_shaping=False,
+                 eps_pos=EPS_POS, eps_vel=EPS_VEL,
+                 success_hold_steps=SUCCESS_HOLD_STEPS, **kwargs):
+        # use_shaping defaults OFF: the paper's EC_omega has exactly two
+        # terms (EF_u, -COM_x) convex-combined -- shaping_bonus has no
+        # counterpart in the equation image. Set True to re-enable it as an
+        # explicit, documented extension rather than a silent addition.
         super().__init__(xml_file=XML_PATH, **kwargs)
 
         assert mode in ("target", "preliminary"), mode
@@ -91,9 +119,23 @@ class PosturalEnv(AnkleHipEnv):
         self.fixed_target = fixed_target
         self.omega = float(omega)
         self.shaping_weight = float(shaping_weight)
+        self.use_shaping = bool(use_shaping)
         self.nd_cap = float(nd_cap)
+        self.eps_pos = float(eps_pos)
+        self.eps_vel = float(eps_vel)
+        self.success_hold_steps = int(success_hold_steps)
+        self._hold_counter = 0
         self.disturb_prob = disturb_prob
         self.force_range = force_range
+        # Continuous, CoM-velocity-proportional anterior perturbation,
+        # matching the real experimental protocol (a motorised belt pulling
+        # forward, scaled by the participant's own CoM horizontal velocity)
+        # -- NOT the same mechanism as disturb_prob/force_range above, which
+        # was a random occasional push. If perturb_vel_gain > 0, this mode
+        # is used instead (continuous, every step, no probability roll).
+        self.perturb_vel_gain = float(perturb_vel_gain)
+        self.perturb_max_force = float(perturb_max_force)
+        self.prev_com_x = 0.0
 
         self.action_space = spaces.Box(-1.0, 1.0, (N_JOINTS,), np.float32)
         # preliminary has no target, so 2 fewer observation dims (no
@@ -126,6 +168,9 @@ class PosturalEnv(AnkleHipEnv):
     def _com_y(self):
         return float(self.data.subtree_com[self.root_body_id][1])
 
+    def _com_x(self):
+        return float(self.data.subtree_com[self.root_body_id][0])
+
     def _get_obs(self):
         q = self.data.qpos[:N_JOINTS].copy()
         qd = self.data.qvel[:N_JOINTS].copy()
@@ -157,6 +202,9 @@ class PosturalEnv(AnkleHipEnv):
         com_y = self._com_y()
         self.prev_norm_dist = abs(com_y - self.target_y) / self.target_range
         self.prev_com_y = com_y
+        self.prev_com_x = self._com_x()
+        self.prev_com_x_dot = 0.0
+        self._hold_counter = 0
         return self._get_obs(), info
 
     # ------------------------------------------------------------------
@@ -203,7 +251,20 @@ class PosturalEnv(AnkleHipEnv):
         raise ValueError(self.safety)
 
     def step(self, action):
-        if self.disturb_prob > 0 and self.np_random.random() < self.disturb_prob:
+        if self.perturb_vel_gain > 0:
+            # Continuous, velocity-proportional anterior pull -- matches the
+            # real protocol (motorised belt, force scaled to the subject's
+            # own CoM velocity). Uses the PREVIOUS step's velocity estimate,
+            # since that's the only value available in real time; this is
+            # applied every step, not rolled probabilistically like the
+            # disturb_prob mechanism below.
+            force = np.clip(self.perturb_vel_gain * self.prev_com_x_dot,
+                            -self.perturb_max_force, self.perturb_max_force)
+            self.data.xfrc_applied[self.trunk_body_id, 0] = force
+        elif self.disturb_prob > 0 and self.np_random.random() < self.disturb_prob:
+            # Legacy mechanism: occasional random push, kept for the
+            # existing eval_perturbation*.py scripts (test-time robustness
+            # checks against an arbitrary, non-velocity-matched disturbance).
             self.data.xfrc_applied[self.trunk_body_id, 0] = \
                 self.np_random.uniform(*self.force_range)
         else:
@@ -223,6 +284,11 @@ class PosturalEnv(AnkleHipEnv):
         self.prev_com_y = com_y
         xcom_y = com_y + com_y_dot / self.omega0
 
+        com_x = self._com_x()
+        com_x_dot = (com_x - self.prev_com_x) / self.step_dt
+        self.prev_com_x = com_x
+        self.prev_com_x_dot = com_x_dot
+
         if self.mode == "preliminary":
             # Baseline reward: penalize squared deviation from center plus
             # effort, matching the original preliminary script's structure
@@ -238,6 +304,7 @@ class PosturalEnv(AnkleHipEnv):
                 reward = position_term + effort_term + 0.1
             info = {"com_y": com_y, "target_y": 0.0, "h": 1.0 - abs(com_y) / self.target_range,
                    "xcom_y": xcom_y, "com_y_dot": com_y_dot,
+                   "com_x": com_x, "com_x_dot": com_x_dot,
                    "norm_dist_raw": abs(com_y) / self.target_range, "failed": failed}
             if self.render_mode == "human":
                 self.render()
@@ -252,7 +319,32 @@ class PosturalEnv(AnkleHipEnv):
         nd = min(norm_dist_raw, self.nd_cap)
         h = 1.0 - nd
 
-        success = (self._current_step >= self._max_steps) and not failed
+        # Success now requires being IN the target band (position AND
+        # velocity), held for success_hold_steps consecutive steps -- not
+        # just "reached max_steps without falling". Fixes the bug where a
+        # policy could be moving fast through the target region at episode
+        # end and still collect the full success bonus. See reward_spec.md
+        # section 4 -- eps_pos/eps_vel/success_hold_steps are placeholders,
+        # not values taken from the paper.
+        in_band = (abs(com_y - self.target_y) < self.eps_pos) and (abs(com_y_dot) < self.eps_vel)
+        if in_band and not failed:
+            self._hold_counter += 1
+        else:
+            self._hold_counter = 0
+        success = (self._hold_counter >= self.success_hold_steps) and not failed
+        # NOTE (changed after seeing real training data): previously treated
+        # "ran out of steps without ever entering the success band" as a
+        # failure, using the same harsh -100-400(1-h) formula. Real eval
+        # showed this punished policies that were stable and only 5-8mm off
+        # target -- nowhere near a fall -- as if they'd fallen. That's an
+        # invented case (the paper's equation doesn't define it at all), so
+        # it no longer gets a special penalty: if it's not success and not a
+        # joint-limit failure, it just falls through to the ordinary
+        # per-step reward below, and the TimeLimit wrapper truncates it
+        # normally. Being "close but not in a mm-tight band" is now
+        # expensive only through the normal per-step h/EC terms, not through
+        # an extra terminal punishment.
+
         if success:
             reward, terminated = SUCCESS_BONUS, True
         elif failed:
@@ -262,14 +354,15 @@ class PosturalEnv(AnkleHipEnv):
             ef_u = float(np.mean(np.square(action)))
             ec_omega = self.omega * ef_u + (1.0 - self.omega) * nd
             safety = self._safety_term(com_y, com_y_dot, q)
-            reward = (h - ec_omega
-                      + self.shaping_weight * shaping_bonus
-                      + self.safety_weight * safety)
+            shaping = (self.shaping_weight * shaping_bonus) if self.use_shaping else 0.0
+            reward = h - ec_omega + shaping + self.safety_weight * safety
             terminated = False
 
         info = {"com_y": com_y, "target_y": self.target_y, "h": h,
                 "xcom_y": xcom_y, "com_y_dot": com_y_dot,
-                "norm_dist_raw": norm_dist_raw, "failed": failed}
+                "com_x": com_x, "com_x_dot": com_x_dot,
+                "norm_dist_raw": norm_dist_raw, "failed": failed,
+                "success": success}
         if self.render_mode == "human":
             self.render()
         return obs, reward, terminated, False, info

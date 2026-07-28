@@ -25,10 +25,10 @@ CURRICULUM = [
 ]
 
 
-def make_env(mode, safety, weight, seed, rank, log_dir, disturb_prob=0.0):
+def make_env(mode, safety, weight, seed, rank, log_dir, disturb_prob=0.0, use_shaping=False):
     def _f():
         e = PosturalEnv(mode=mode, safety=safety, safety_weight=weight,
-                        disturb_prob=disturb_prob)
+                        disturb_prob=disturb_prob, use_shaping=use_shaping)
         e = TimeLimit(e, max_episode_steps=1000)
         # filename per rank so Monitor's csv writer doesn't collide across
         # the parallel envs; load_results() in plot_results.py reads all of
@@ -59,6 +59,12 @@ def main():
                          "instead of the 4-stage curriculum.")
     p.add_argument("--disturb-prob", type=float, default=0.0,
                     help="Used only with --no-curriculum in preliminary mode.")
+    p.add_argument("--use-shaping", action="store_true",
+                    help="Re-enable the shaping_bonus term (not in the paper's "
+                         "EC_omega, but 100k-step sanity check showed reward/step "
+                         "improving -8.48->-4.52 WITH it vs flat/worse WITHOUT it. "
+                         "Off by default to match the paper's clean 2-term convex "
+                         "combination; pass this flag to override that choice.")
     a = p.parse_args()
 
     if a.mode == "preliminary":
@@ -75,7 +81,8 @@ def main():
         total_done = 0
         for stage in CURRICULUM:
             env = SubprocVecEnv([make_env(a.mode, a.safety, a.weight, a.seed * 1000, i,
-                                          log_dir, disturb_prob=stage["disturb_prob"])
+                                          log_dir, disturb_prob=stage["disturb_prob"],
+                                          use_shaping=a.use_shaping)
                                  for i in range(a.n_envs)])
             env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
             if model is None:
@@ -92,12 +99,13 @@ def main():
             env.save(f"{log_dir}/vecnormalize.pkl")
             env.close()
         with open(f"{log_dir}/config.json", "w") as f:
-            json.dump({"mode": a.mode, "safety": a.safety, "weight": a.weight}, f)
+            json.dump({"mode": a.mode, "safety": a.safety, "weight": a.weight,
+                       "use_shaping": a.use_shaping}, f)
         return
 
     disturb = a.disturb_prob if a.mode == "preliminary" else 0.0
     env = SubprocVecEnv([make_env(a.mode, a.safety, a.weight, a.seed * 1000, i, log_dir,
-                                  disturb_prob=disturb)
+                                  disturb_prob=disturb, use_shaping=a.use_shaping)
                          for i in range(a.n_envs)])
     # norm_obs=True: the previous script had this OFF, leaving target_y as the
     # smallest-magnitude input in the observation vector.
@@ -116,7 +124,8 @@ def main():
     env.save(f"{log_dir}/vecnormalize.pkl")
     env.close()
     with open(f"{log_dir}/config.json", "w") as f:
-        json.dump({"mode": a.mode, "safety": a.safety, "weight": a.weight}, f)
+        json.dump({"mode": a.mode, "safety": a.safety, "weight": a.weight,
+                   "use_shaping": a.use_shaping}, f)
 
 
 if __name__ == "__main__":

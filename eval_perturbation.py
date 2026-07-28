@@ -22,7 +22,7 @@ def rollout(model, run_dir, cfg, target, disturb_prob, force_range, seed):
     def make():
         e = PosturalEnv(mode=cfg["mode"], safety=cfg["safety"], safety_weight=0.0,
                         fixed_target=target, disturb_prob=disturb_prob,
-                        force_range=force_range)
+                        force_range=force_range, use_shaping=cfg.get("use_shaping", False))
         e = TimeLimit(e, max_episode_steps=1000)
         e.reset(seed=seed)
         return e

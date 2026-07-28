@@ -32,7 +32,8 @@ def collect_episodes(run_dir, n_episodes=20):
     rows = []
     for ep in range(1, n_episodes + 1):
         venv = DummyVecEnv([lambda: TimeLimit(
-            PosturalEnv(mode=cfg["mode"], safety=cfg["safety"], safety_weight=0.0),
+            PosturalEnv(mode=cfg["mode"], safety=cfg["safety"], safety_weight=0.0,
+                       use_shaping=cfg.get("use_shaping", False)),
             max_episode_steps=1000)])
         venv = VecNormalize.load(f"{run_dir}/vecnormalize.pkl", venv)
         venv.training = False

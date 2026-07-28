@@ -24,7 +24,7 @@ LIMIT = JOINT_RANGE * FAIL_MARGIN
 def _rollout(run_dir, model, cfg, fixed_target, seed):
     def make():
         e = PosturalEnv(mode=cfg["mode"], safety=cfg["safety"], safety_weight=0.0,
-                        fixed_target=fixed_target)
+                        fixed_target=fixed_target, use_shaping=cfg.get("use_shaping", False))
         e = TimeLimit(e, max_episode_steps=1000)
         e.reset(seed=seed)
         return e
