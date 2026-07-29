@@ -19,16 +19,19 @@ target_m = real["com0_final"].abs().mean() / 1000.0  # real target, meters
 print(f"Real subject's average target magnitude: {target_m*1000:.1f} mm "
       f"({target_m:.4f} m)")
 
-for real_side, sign in [("right", -1), ("left", +1)]:
+for real_side, sign in [("right", +1), ("left", -1)]:
     sub = real[real.side == real_side]
     real_final_mm = sub.com0_final.mean()
     real_final_std = sub.com0_final.std()
 
     t = sign * target_m
     model = PPO.load(f"{run_dir}/model")
-    venv = DummyVecEnv([lambda t=t: TimeLimit(
-        PosturalEnv(safety="none", safety_weight=0.0, fixed_target=t),
-        max_episode_steps=1000)])
+    def make_env(t=t):
+        e = PosturalEnv(safety="none", safety_weight=0.0, fixed_target=t)
+        e = TimeLimit(e, max_episode_steps=1000)
+        e.reset(seed=0)
+        return e
+    venv = DummyVecEnv([make_env])
     venv = VecNormalize.load(f"{run_dir}/vecnormalize.pkl", venv)
     venv.training = False
     venv.norm_reward = False

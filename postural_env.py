@@ -44,12 +44,12 @@ N_JOINTS = 4
 JOINT_RANGE = np.array([0.3, 0.5, 0.5, 0.5])
 FAIL_MARGIN = 0.95                    # terminate at 95% of range, not 100%
 
-TARGET_RANGE = 0.03                   # see diagnose.py: 0.05 is 79% of the
+TARGET_RANGE = 0.047                   # see diagnose.py: 0.05 is 79% of the
                                       # actuator ceiling, 0.03 is 48%
 OMEGA = 0.2                           # carried over from candidate 1
 SHAPING_WEIGHT = 20.0                 # carried over from candidate 1
 ND_CAP = 1.0                          # bound on norm_dist used for h and in
-                                      # EC_omega. Was 4.0 -- EF_u (naturally in
+                                      # EC_omega. Was 4.0 -- apparently, both EF_u (naturally in
                                       # [0,1], since actions are in [-1,1])
                                       # and the tracking-error term should
                                       # both lie in [-1,1]. Capping at 4 let
@@ -66,16 +66,17 @@ SUCCESS_BONUS = 2.0     # was 1000 -- now paid every step in-zone, so 1000x dwar
 FAIL_BASE = -100.0
 FAIL_SLOPE = -400.0
 
-# EPS_POS: confirmed the real experimental target radius was 5mm
+# --- Success/failure band, see reward_spec.md section 4 -------------------
+# EPS_POS: real experimental target radius was 5mm
 # -- using that directly now instead of my earlier derived/guessed values
 # (2mm invented, then 4mm from real_trials data, both superseded).
 #
-# EPS_VEL: still not sourced. feedback addressed the position
+# EPS_VEL: still not sourced. Latest feedback addressed the position
 # radius but not a velocity number. Keeping the earlier 0.01 m/s as a
-# placeholder pending an actual value -- not presenting it as resolved.
+# placeholder pending an actual value -- flagging this, not presenting it
+# as resolved.
 #
-# SUCCESS_HOLD_STEPS removed entirely: feedback was explicit that success
-# should NOT be based on how many steps the model holds position -- it's an
+# SUCCESS_HOLD_STEPS removed entirely: success should NOT be based on how many steps the model holds position -- it's an
 # instantaneous test (in the band right now), not a sustained-hold test.
 # The hold-counter mechanism (added earlier this session, my own invention)
 # is gone; this was likely also the cause of inconsistent episode lengths
@@ -166,6 +167,8 @@ class PosturalEnv(AnkleHipEnv):
         self.omega0 = float(np.sqrt(9.81 / self.com_height))
         self.base_half_width = float(
             self.model.geom("foot_geom").size[1])
+        self.base_half_length = float(
+            self.model.geom("foot_geom").size[0])  # anterior-posterior extent
 
         self.fail_low = -JOINT_RANGE * FAIL_MARGIN
         self.fail_high = JOINT_RANGE * FAIL_MARGIN
@@ -248,8 +251,7 @@ class PosturalEnv(AnkleHipEnv):
             # NOTE: kept as an exploratory extra, not the primary candidate
             # 3 -- joint-limit terms are common in locomotion RL but not in
             # postural-control literature, which favours CoP/capture-point-
-            # style base-of-support constraints instead. 'capture' above is
-            # the one that matches the supervisor's actual request.
+            # style base-of-support constraints instead.
             frac = np.abs(q) / JOINT_RANGE
             excess = np.clip(frac - 0.7, 0.0, None) / 0.3
             return -float(np.sum(excess ** 2))
@@ -324,8 +326,8 @@ class PosturalEnv(AnkleHipEnv):
         nd = min(norm_dist_raw, self.nd_cap)
         h = 1.0 - nd
 
-        # Success is still the instantaneous position+velocity test your
-        # supervisor specified -- that part doesn't change. What changes:
+        # Success is still the instantaneous position+velocity
+        # What changes:
         # it no longer ends the episode. A one-shot terminal bonus gave the
         # model zero training signal for what to do AFTER reaching the
         # zone -- confirmed by testing: forcing rollouts to continue past
@@ -346,6 +348,7 @@ class PosturalEnv(AnkleHipEnv):
             reward = SUCCESS_BONUS
             terminated = False
         else:
+
             ef_u = float(np.mean(np.square(action)))
             ec_omega = self.omega * ef_u + (1.0 - self.omega) * nd
             safety = self._safety_term(com_y, com_y_dot, q)

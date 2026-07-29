@@ -41,6 +41,7 @@ def collect_episodes(run_dir, n_episodes=20):
 
         obs = venv.reset()
         raw = venv.venv.envs[0].unwrapped
+        gears = raw.model.actuator_gear[:, 0].copy()  # real Nm-per-unit-action, read from the model
         total_reward, step_idx, info = 0.0, 0, [{}]
         done = False
         while not done:
@@ -51,6 +52,7 @@ def collect_episodes(run_dir, n_episodes=20):
             for i, name in enumerate(JOINT_NAMES):
                 row[f"{name}_deg"] = float(angles[i]) * 180 / math.pi
                 row[f"{name}_action"] = float(action[0][i])
+                row[f"{name}_torque_nm"] = float(action[0][i]) * float(gears[i])
 
             obs, reward, done_v, info = venv.step(action)
             done = bool(done_v[0])
@@ -61,6 +63,7 @@ def collect_episodes(run_dir, n_episodes=20):
             row.update({
                 "reward": float(reward[0]), "cum_reward": total_reward,
                 "com_y": float(i0["com_y"]), "target_y": float(i0["target_y"]),
+                "com_x": float(i0["com_x"]),
                 "h": float(i0["h"]), "xcom_y": float(i0["xcom_y"]),
                 "failed": bool(i0["failed"]),
             })
@@ -98,7 +101,7 @@ def _save(fig, path_no_ext):
               f"Run 'plotly_get_chrome' once to enable PNG export.)")
 
 
-def make_plots(run_dir, df, summary, base_half_width, title_tag):
+def make_plots(run_dir, df, summary, base_half_width, base_half_length, joint_gears, title_tag):
     out_dir = os.path.join(run_dir, "plots")
     os.makedirs(out_dir, exist_ok=True)
     df.to_csv(os.path.join(out_dir, "trajectories.csv"), index=False)
@@ -136,13 +139,37 @@ def make_plots(run_dir, df, summary, base_half_width, title_tag):
     fig.update_yaxes(title_text="y (m)")
     _save(fig, os.path.join(out_dir, "xcom_vs_boundary"))
 
-    # 3. joint actions, episode 1
+    # 2b. CoM-x (anterior-posterior) vs. the FORWARD/BACKWARD boundary --
+    # this is the axis the real perturbation actually acts on (a belt
+    # pulling anteriorly), unlike the mediolateral plot above which uses
+    # the left/right boundary instead.
     fig = go.Figure()
-    for name in JOINT_NAMES:
-        fig.add_trace(go.Scatter(x=d["step"], y=d[f"{name}_action"], mode="lines", name=f"{name} action"))
-    fig.update_layout(title=f"Joint action trajectories (episode 1, {title_tag})")
+    fig.add_trace(go.Scatter(x=d["step"], y=d["com_x"], mode="lines", name="CoM x", line=dict(color="darkorange")))
+    fig.add_hline(y=base_half_length, line=dict(color="red", dash="dash"), annotation_text="forward boundary")
+    fig.add_hline(y=-base_half_length, line=dict(color="red", dash="dash"), annotation_text="backward boundary")
+    fig.update_layout(title=f"CoM-x (anterior-posterior) vs. base-of-support boundary (episode 1, {title_tag})")
     fig.update_xaxes(title_text="Step")
-    fig.update_yaxes(title_text="Action (normalized, -1 to 1)")
+    fig.update_yaxes(title_text="x (m)")
+    _save(fig, os.path.join(out_dir, "com_x_vs_ap_boundary"))
+
+    # 3. joint torque (Nm), episode 1 -- NOT the normalized action. Actions
+    # are always in [-1,1] by construction (that's the action space), which
+    # was confusing to read as "torque". Real torque = action * gear, and
+    # gears differ per joint (ankle_eversion=30, ankle_flexion=50,
+    # hip_abduction=50, hip_flexion=75 Nm) -- read from the model, not
+    # hardcoded, so this can't silently drift out of date.
+    colors = ["blue", "red", "green", "purple"]
+    fig = go.Figure()
+    for name, color in zip(JOINT_NAMES, colors):
+        fig.add_trace(go.Scatter(x=d["step"], y=d[f"{name}_torque_nm"], mode="lines",
+                                 name=f"{name} torque", line=dict(color=color)))
+    for name, gear, color in zip(JOINT_NAMES, joint_gears, colors):
+        fig.add_hline(y=gear, line=dict(color=color, dash="dot", width=1))
+        fig.add_hline(y=-gear, line=dict(color=color, dash="dot", width=1))
+    fig.update_layout(title=f"Joint torque trajectories (episode 1, {title_tag})<br>"
+                            f"<sub>dotted lines = each joint's actual torque limit</sub>")
+    fig.update_xaxes(title_text="Step")
+    fig.update_yaxes(title_text="Torque (Nm)")
     _save(fig, os.path.join(out_dir, "joint_action_trajectories"))
 
     # 4. final com_y vs target_y scatter, all episodes
@@ -231,6 +258,8 @@ if __name__ == "__main__":
     # base_half_width is a model constant, same for every candidate
     from postural_env import PosturalEnv as _E
     bhw = _E(safety="none", safety_weight=0.0).base_half_width
-    make_plots(run_dir, df, summary, bhw, title_tag)
+    bhl = _E(safety="none", safety_weight=0.0).base_half_length
+    gears = _E(safety="none", safety_weight=0.0).model.actuator_gear[:, 0].copy()
+    make_plots(run_dir, df, summary, bhw, bhl, gears, title_tag)
     com_over_time_plot(df, os.path.join(run_dir, "plots"), title_tag)
     print(f"\nPlots saved to {run_dir}/plots/")
