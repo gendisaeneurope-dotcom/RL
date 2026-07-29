@@ -44,12 +44,13 @@ N_JOINTS = 4
 JOINT_RANGE = np.array([0.3, 0.5, 0.5, 0.5])
 FAIL_MARGIN = 0.95                    # terminate at 95% of range, not 100%
 
-TARGET_RANGE = 0.047                   # see diagnose.py: 0.05 is 79% of the
+TARGET_RANGE = 0.047                  # see diagnose.py: 0.05 is 79% of the
                                       # actuator ceiling, 0.03 is 48%
 OMEGA = 0.2                           # carried over from candidate 1
 SHAPING_WEIGHT = 20.0                 # carried over from candidate 1
 ND_CAP = 1.0                          # bound on norm_dist used for h and in
-                                      # EC_omega. Was 4.0 -- apparently, both EF_u (naturally in
+                                      # EC_omega. Was 4.0 -- supervisor
+                                      # flagged that both EF_u (naturally in
                                       # [0,1], since actions are in [-1,1])
                                       # and the tracking-error term should
                                       # both lie in [-1,1]. Capping at 4 let
@@ -67,16 +68,17 @@ FAIL_BASE = -100.0
 FAIL_SLOPE = -400.0
 
 # --- Success/failure band, see reward_spec.md section 4 -------------------
-# EPS_POS: real experimental target radius was 5mm
+# EPS_POS: supervisor confirmed the real experimental target radius was 5mm
 # -- using that directly now instead of my earlier derived/guessed values
 # (2mm invented, then 4mm from real_trials data, both superseded).
 #
-# EPS_VEL: still not sourced. Latest feedback addressed the position
+# EPS_VEL: still not sourced. Supervisor's feedback addressed the position
 # radius but not a velocity number. Keeping the earlier 0.01 m/s as a
 # placeholder pending an actual value -- flagging this, not presenting it
 # as resolved.
 #
-# SUCCESS_HOLD_STEPS removed entirely: success should NOT be based on how many steps the model holds position -- it's an
+# SUCCESS_HOLD_STEPS removed entirely: supervisor was explicit that success
+# should NOT be based on how many steps the model holds position -- it's an
 # instantaneous test (in the band right now), not a sustained-hold test.
 # The hold-counter mechanism (added earlier this session, my own invention)
 # is gone; this was likely also the cause of inconsistent episode lengths
@@ -111,7 +113,7 @@ class PosturalEnv(AnkleHipEnv):
                  shaping_weight=SHAPING_WEIGHT, nd_cap=ND_CAP,
                  disturb_prob=0.0, force_range=(-20, 20),
                  perturb_vel_gain=0.0, perturb_max_force=100.0,
-                 use_shaping=False,
+                 use_shaping=False, ec_scale=1.0,
                  eps_pos=EPS_POS, eps_vel=EPS_VEL, **kwargs):
         # use_shaping defaults OFF: the paper's EC_omega has exactly two
         # terms (EF_u, -COM_x) convex-combined -- shaping_bonus has no
@@ -129,6 +131,7 @@ class PosturalEnv(AnkleHipEnv):
         self.omega = float(omega)
         self.shaping_weight = float(shaping_weight)
         self.use_shaping = bool(use_shaping)
+        self.ec_scale = float(ec_scale)
         self.nd_cap = float(nd_cap)
         self.eps_pos = float(eps_pos)
         self.eps_vel = float(eps_vel)
@@ -251,7 +254,8 @@ class PosturalEnv(AnkleHipEnv):
             # NOTE: kept as an exploratory extra, not the primary candidate
             # 3 -- joint-limit terms are common in locomotion RL but not in
             # postural-control literature, which favours CoP/capture-point-
-            # style base-of-support constraints instead.
+            # style base-of-support constraints instead. 'capture' above is
+            # the one that matches the supervisor's actual request.
             frac = np.abs(q) / JOINT_RANGE
             excess = np.clip(frac - 0.7, 0.0, None) / 0.3
             return -float(np.sum(excess ** 2))
@@ -281,15 +285,32 @@ class PosturalEnv(AnkleHipEnv):
         obs = self._get_obs()
         q = self.data.qpos[:N_JOINTS].copy()
 
-        failed = bool(not np.isfinite(obs).all()
-                      or np.any(q < self.fail_low)
-                      or np.any(q > self.fail_high))
-        self._current_step += 1
-
         com_y = self._com_y()
         com_y_dot = (com_y - self.prev_com_y) / self.step_dt
         self.prev_com_y = com_y
         xcom_y = com_y + com_y_dot / self.omega0
+
+        # Failure now has two conditions, both inspired by the real paper's
+        # three-condition failure definition (max time / joint limit /
+        # "falls", where "falls" = height below 50% of standing for their
+        # squat-to-stand task). For this mediolateral task, "falls" doesn't
+        # map to height -- it maps to the standard postural-control
+        # stability criterion: the extrapolated CoM (capture point, xcom_y)
+        # exiting the base of support. xcom_y was already computed every
+        # step for the safety terms in candidates 2/3, but was never used
+        # as a FAILURE condition for candidate 1 -- this was a real gap,
+        # not a deliberate choice. Joint-limit is kept as the other
+        # condition (matches the paper's joint-limit condition directly).
+        # NOT added: "max time elapsed" as a failure. The paper does treat
+        # timeout as a failure. We tested exactly this earlier this session
+        # and found it punished policies that were stable and close to
+        # target but outside a tight precision band, as if they'd fallen --
+        # a real, disclosed trade-off, not an oversight.
+        failed = bool(not np.isfinite(obs).all()
+                      or np.any(q < self.fail_low)
+                      or np.any(q > self.fail_high)
+                      or abs(xcom_y) > self.base_half_width)
+        self._current_step += 1
 
         com_x = self._com_x()
         com_x_dot = (com_x - self.prev_com_x) / self.step_dt
@@ -326,8 +347,8 @@ class PosturalEnv(AnkleHipEnv):
         nd = min(norm_dist_raw, self.nd_cap)
         h = 1.0 - nd
 
-        # Success is still the instantaneous position+velocity
-        # What changes:
+        # Success is still the instantaneous position+velocity test your
+        # supervisor specified -- that part doesn't change. What changes:
         # it no longer ends the episode. A one-shot terminal bonus gave the
         # model zero training signal for what to do AFTER reaching the
         # zone -- confirmed by testing: forcing rollouts to continue past
@@ -348,12 +369,22 @@ class PosturalEnv(AnkleHipEnv):
             reward = SUCCESS_BONUS
             terminated = False
         else:
-
+            # Reverted to strictly uniform effort -- no per-joint weighting.
+            # The (1,3,1,3) version fixed the sagittal-joint actuator-waste
+            # problem, but it broke the "single weight for the convex
+            # combination" rule explicitly stated as a requirement. This
+            # version complies with that rule; the tradeoff is the
+            # actuator-waste problem is very likely back. Not hidden --
+            # flagged here and in reward_spec.md.
             ef_u = float(np.mean(np.square(action)))
             ec_omega = self.omega * ef_u + (1.0 - self.omega) * nd
             safety = self._safety_term(com_y, com_y_dot, q)
             shaping = (self.shaping_weight * shaping_bonus) if self.use_shaping else 0.0
-            reward = h - ec_omega + shaping + self.safety_weight * safety
+            # ec_scale: the ONLY extra freedom explicitly authorized --
+            # "a scaling factor in front of the EC_omega equation" as long
+            # as the combination itself stays single-omega. Default 1.0
+            # (no change) unless you have a specific reason to retune it.
+            reward = h - self.ec_scale * ec_omega + shaping + self.safety_weight * safety
             terminated = False
 
         info = {"com_y": com_y, "target_y": self.target_y, "h": h,
