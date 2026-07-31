@@ -21,10 +21,27 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 CONFIGS = {
-    "candidate1": dict(module="candidate1_target", cls="Candidate1Env",
-                        model="ppo_candidate1", vecnorm="vecnormalize_candidate1.pkl"),
+    "candidate1_A": dict(module="candidate1_A", cls="Candidate1Env",
+                        model="ppo_candidate1_A", vecnorm="vecnormalize_candidate1_A.pkl",
+                        log_dir="./training_logs_candidate1_A/"),
     "candidate2_xcom": dict(module="candidate2_xcom", cls="Candidate2Env",
-                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl"),
+                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl",
+                             log_dir="./training_logs_candidate2_xcom/"),
+    "candidate1_B": dict(module="candidate1_B", cls="Candidate1Env",
+                          model="ppo_candidate1_B", vecnorm="vecnormalize_candidate1_B.pkl",
+                          log_dir="./training_logs_candidate1_B/"),
+    "candidate1_C": dict(module="candidate1_C", cls="Candidate1Env",
+                          model="ppo_candidate1_C", vecnorm="vecnormalize_candidate1_C.pkl",
+                          log_dir="./training_logs_candidate1_C/"),
+    "candidate1_D": dict(module="candidate1_D", cls="Candidate1Env",
+                          model="ppo_candidate1_D", vecnorm="vecnormalize_candidate1_D.pkl",
+                          log_dir="./training_logs_candidate1_D/"),
+    "candidate1_E": dict(module="candidate1_E", cls="Candidate1Env",
+                              model="ppo_candidate1_E", vecnorm="vecnormalize_candidate1_E.pkl",
+                              log_dir="./training_logs_candidate1_E/"),
+    "candidate1_F": dict(module="candidate1_F", cls="Candidate1Env",
+                                  model="ppo_candidate1_F", vecnorm="vecnormalize_candidate1_F.pkl",
+                                  log_dir="./training_logs_candidate1_F/"),
 }
 
 # Same escalating conditions as the original script.
@@ -41,31 +58,28 @@ def make_venv(EnvClass, cfg, cond, seed=None):
     def _f():
         e = EnvClass(**cond)
         e = TimeLimit(e, max_episode_steps=1000)
-        if seed is not None:
-            e.reset(seed=seed)
         return e
     venv = DummyVecEnv([_f])
     venv = VecNormalize.load(cfg["vecnorm"], venv)
     venv.training = False
     venv.norm_reward = False
+    if seed is not None:
+        venv.seed(seed)
     return venv
 
 
-def main():
-    key = sys.argv[1] if len(sys.argv) > 1 else "candidate1"
+def run_one(key):
     cfg = CONFIGS[key]
     module = __import__(cfg["module"])
     EnvClass = getattr(module, cfg["cls"])
-
     model = PPO.load(cfg["model"])
-    # Both candidate envs are target-reaching (unlike postural_env.py's
-    # "preliminary" mode), so the target-tracking check always applies here.
+
+    print(f"\n{'#'*60}\n# {key}\n{'#'*60}")
 
     for cond in CONDITIONS:
         print(f"\n=== disturb_prob={cond['disturb_prob']}, "
               f"force_range={cond['force_range']} ===")
 
-        # Reward/length summary
         venv = make_venv(EnvClass, cfg, cond)
         rewards, lengths = evaluate_policy(model, venv, n_eval_episodes=20,
                                            return_episode_rewards=True)
@@ -73,8 +87,6 @@ def main():
         print(f"Mean reward: {np.mean(rewards):.4f} +/- {np.std(rewards):.4f}  |  "
               f"episodes at full length: {sum(1 for l in lengths if l == 1000)}/20")
 
-        # Does it still reach the target despite the disturbance? Reward/
-        # length alone can't answer this -- need final com_y vs target_y.
         errors = []
         for ep in range(10):
             venv2 = make_venv(EnvClass, cfg, cond, seed=ep)
@@ -92,6 +104,18 @@ def main():
                   f"error={err:.4f}, failed={i['failed']}")
             venv2.close()
         print(f"Mean |error| across 10 episodes: {np.mean(np.abs(errors)):.4f}")
+
+
+def main():
+    arg = sys.argv[1] if len(sys.argv) > 1 else "all"
+    keys = list(CONFIGS.keys()) if arg == "all" else [arg]
+    for key in keys:
+        try:
+            run_one(key)
+        except FileNotFoundError as e:
+            print(f"\nSkipping {key}: missing model/vecnorm file ({e})")
+        except Exception as e:
+            print(f"\nSkipping {key}: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

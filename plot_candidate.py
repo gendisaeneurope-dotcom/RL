@@ -41,6 +41,9 @@ CONFIGS = {
     "candidate1_E": dict(module="candidate1_E", cls="Candidate1Env",
                               model="ppo_candidate1_E", vecnorm="vecnormalize_candidate1_E.pkl",
                               log_dir="./training_logs_candidate1_E/"),
+    "candidate1_F": dict(module="candidate1_F", cls="Candidate1Env",
+                                  model="ppo_candidate1_F", vecnorm="vecnormalize_candidate1_F.pkl",
+                                  log_dir="./training_logs_candidate1_F/"),
 }
 
 
