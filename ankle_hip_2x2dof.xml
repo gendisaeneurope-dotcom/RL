@@ -1,38 +1,56 @@
 <mujoco model="4dof_postural_control_ankle_hip">
-  <compiler angle="radian" inertiafromgeom="auto"/>
+  <compiler angle="radian" inertiafromgeom="true"/>
   <default>
     <joint armature="0.05" damping="10" stiffness="20" limited="true"/>
     <geom contype="0" friction="1 0.1 0.1" rgba="0.7 0.7 0 1"/>
   </default>
   <option gravity="0 0 -9.81" integrator="implicitfast" timestep="0.005"/>
+
+  <!-- Axis convention: x = anterior-posterior, y = mediolateral, z = vertical -->
+
   <worldbody>
     <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" rgba="0.9 0.9 0.9 1"/>
+
+    <!-- Foot (fixed base, represents ankle pivot point) -->
     <body name="foot" pos="0 0 0.05">
       <geom name="foot_geom" type="box" size="0.15 0.08 0.05" rgba="0.3 0.3 0.3 1"/>
+
+      <!-- ANKLE COMPLEX: 2 rotational DOF at one anatomical joint -->
+      <!-- Dummy massless body carries the eversion/inversion (frontal-plane, x-axis) rotation -->
       <body name="ankle_eversion_dummy" pos="0 0 0.05">
-        <joint name="ankle_eversion" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.3 0.3"/>
+        <joint name="ankle_eversion" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.611 0.611"/>
         <inertial pos="0 0 0" mass="0.001" diaginertia="1e-6 1e-6 1e-6"/>
+
+        <!-- Leg segment: merges old shank+thigh (ankle -> hip), carries ankle flexion (sagittal, y-axis) -->
         <body name="leg" pos="0 0 0">
-          <joint name="ankle_flexion" type="hinge" axis="0 1 0" pos="0 0 0" range="-0.5 0.5"/>
+          <joint name="ankle_flexion" type="hinge" axis="0 1 0" pos="0 0 0" range="-0.873 0.873"/>
           <geom name="leg_geom" type="capsule" fromto="0 0 0 0 0 0.9" size="0.035" rgba="0.8 0.2 0.2 1"/>
           <inertial pos="0 0 0.45" mass="11.0" diaginertia="0.15 0.15 0.02"/>
+
+          <!-- HIP COMPLEX: 2 rotational DOF at one anatomical joint -->
+          <!-- Dummy massless body carries the abduction/adduction (frontal-plane, x-axis) rotation -->
           <body name="hip_abduction_dummy" pos="0 0 0.9">
-            <joint name="hip_abduction" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.5 0.5"/>
+            <joint name="hip_abduction" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.873 0.524"/>
             <inertial pos="0 0 0" mass="0.001" diaginertia="1e-6 1e-6 1e-6"/>
+
+            <!-- Trunk segment: merges old pelvis+trunk (hip -> top), carries hip flexion (sagittal, y-axis) -->
             <body name="trunk" pos="0 0 0">
-              <joint name="hip_flexion" type="hinge" axis="0 1 0" pos="0 0 0" range="-0.5 0.5"/>
+              <joint name="hip_flexion" type="hinge" axis="0 1 0" pos="0 0 0" range="-0.524 2.094"/>
               <geom name="trunk_geom" type="capsule" fromto="0 0 0 0 0 0.6" size="0.06" rgba="0.2 0.2 0.8 1"/>
               <inertial pos="0 0 0.3" mass="35.0" diaginertia="0.35 0.35 0.05"/>
             </body>
+
           </body>
         </body>
       </body>
     </body>
   </worldbody>
+
   <actuator>
     <motor name="ankle_eversion_motor" joint="ankle_eversion" gear="30" ctrlrange="-1 1"/>
     <motor name="ankle_flexion_motor" joint="ankle_flexion" gear="50" ctrlrange="-1 1"/>
     <motor name="hip_abduction_motor" joint="hip_abduction" gear="50" ctrlrange="-1 1"/>
     <motor name="hip_flexion_motor" joint="hip_flexion" gear="75" ctrlrange="-1 1"/>
   </actuator>
+
 </mujoco>
