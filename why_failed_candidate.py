@@ -4,8 +4,9 @@ candidate1_target.py / candidate2_xcom.py outputs, which don't share
 postural_env.py's module-level JOINT_RANGE / FAIL_MARGIN constants.
 
 Usage:
-    python why_failed_candidate.py candidate1_A/B/C/D/E/F
+    python why_failed_candidate.py candidate1_F
     python why_failed_candidate.py candidate2_xcom
+    python why_failed_candidate.py candidate3_capturepoint
 """
 import sys
 import numpy as np
@@ -16,27 +17,16 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"]
 
 CONFIGS = {
-    "candidate1_A": dict(module="candidate1_A", cls="Candidate1Env",
-                        model="ppo_candidate1_A", vecnorm="vecnormalize_candidate1_A.pkl",
-                        log_dir="./training_logs_candidate1_A/"),
-    "candidate2_xcom": dict(module="candidate2_xcom", cls="Candidate2Env",
-                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl",
-                             log_dir="./training_logs_candidate2_xcom/"),
-    "candidate1_B": dict(module="candidate1_B", cls="Candidate1Env",
-                          model="ppo_candidate1_B", vecnorm="vecnormalize_candidate1_B.pkl",
-                          log_dir="./training_logs_candidate1_B/"),
-    "candidate1_C": dict(module="candidate1_C", cls="Candidate1Env",
-                          model="ppo_candidate1_C", vecnorm="vecnormalize_candidate1_C.pkl",
-                          log_dir="./training_logs_candidate1_C/"),
-    "candidate1_D": dict(module="candidate1_D", cls="Candidate1Env",
-                          model="ppo_candidate1_D", vecnorm="vecnormalize_candidate1_D.pkl",
-                          log_dir="./training_logs_candidate1_D/"),
-    "candidate1_E": dict(module="candidate1_E", cls="Candidate1Env",
-                              model="ppo_candidate1_E", vecnorm="vecnormalize_candidate1_E.pkl",
-                              log_dir="./training_logs_candidate1_E/"),
+
     "candidate1_F": dict(module="candidate1_F", cls="Candidate1Env",
                                   model="ppo_candidate1_F", vecnorm="vecnormalize_candidate1_F.pkl",
                                   log_dir="./training_logs_candidate1_F/"),
+    "candidate2_xcom": dict(module="candidate2_xcom", cls="Candidate2Env",
+                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl",
+                             log_dir="./training_logs_candidate2_xcom/"),
+    "candidate3_capturepoint": dict(module="candidate3_capturepoint", cls="Candidate3Env",
+                                     model="ppo_candidate3_capturepoint", vecnorm="vecnormalize_candidate3_capturepoint.pkl",
+                                     log_dir="./training_logs_candidate3_capturepoint/"),
 }
 
 

@@ -1,6 +1,6 @@
 """
 Candidate F: action-based effort (from C) + effort always active + eps_vel=0.1
-Standalone version -- current, supervisor-approved reward formulation.
+Standalone version
 Reflects fixes from postural_env.py: torque-based effort, real joint
 ranges, per-step (non-terminal) success. No safety/XCoM term (that's
 candidate 2).
@@ -41,7 +41,7 @@ FAIL_BASE = -100.0
 FAIL_SLOPE = -400.0
 
 EPS_POS = 0.005            # m, real experimental target radius (supervisor-confirmed)
-EPS_VEL = 0.01               # m/s
+EPS_VEL = 0.01             # m/s
 
 USE_SHAPING = False        # paper's EC_omega has no shaping term; keep off unless justified
 
@@ -94,13 +94,14 @@ class Candidate1Env(AnkleHipEnv):
         self.fail_low = JOINT_LOW * FAIL_MARGIN
         self.fail_high = JOINT_HIGH * FAIL_MARGIN
 
-    def _com_y(self):
-        return float(self.data.subtree_com[self.root_body_id][1])
+    def _com_xy(self):
+        com_pos = self.data.subtree_com[self.root_body_id]
+        return float(com_pos[0]), float(com_pos[1])   # (x, y)
 
     def _get_obs(self):
         q = self.data.qpos[:N_JOINTS].copy()
         qd = self.data.qvel[:N_JOINTS].copy()
-        com_y = self._com_y()
+        com_x, com_y = self._com_xy()
         return np.concatenate([
             q, qd,
             [com_y / self.target_range],
@@ -117,7 +118,7 @@ class Candidate1Env(AnkleHipEnv):
 
         self.target_y = (float(self.fixed_target) if self.fixed_target is not None
                           else float(self.np_random.uniform(-self.target_range, self.target_range)))
-        com_y = self._com_y()
+        com_x, com_y = self._com_xy()
         self.prev_norm_dist = abs(com_y - self.target_y) / self.target_range
         self.prev_com_y = com_y
         return self._get_obs(), info
@@ -133,7 +134,7 @@ class Candidate1Env(AnkleHipEnv):
         obs = self._get_obs()
         q = self.data.qpos[:N_JOINTS].copy()
 
-        com_y = self._com_y()
+        com_x, com_y = self._com_xy()
         com_y_dot = (com_y - self.prev_com_y) / self.step_dt
         self.prev_com_y = com_y
         xcom_y = com_y + com_y_dot / self.omega0
@@ -180,7 +181,7 @@ class Candidate1Env(AnkleHipEnv):
 
         terminated = bool(failed)
 
-        info = {"com_y": com_y, "target_y": self.target_y, "h": h,
+        info = {"com_y": com_y, "com_x": com_x, "target_y": self.target_y, "h": h,
                 "xcom_y": xcom_y, "com_y_dot": com_y_dot, "failed": failed, "success": success}
         if self.render_mode == "human":
             self.render()

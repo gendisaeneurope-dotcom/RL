@@ -10,38 +10,29 @@ same CONFIGS dict pattern as plot_candidate.py / why_failed_candidate.py.
 Model is always loaded as trained WITHOUT perturbation; disturbance is
 introduced here, at test time only.
 
-    python eval_perturbation_robustness_candidate.py candidate1
+    python eval_perturbation_robustness_candidate.py candidate1_F
     python eval_perturbation_robustness_candidate.py candidate2_xcom
+    python eval_perturbation_robustness_candidate.py candidate3_capturepoint
 """
 import sys
 import numpy as np
+import os
+import plotly.graph_objects as go
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 CONFIGS = {
-    "candidate1_A": dict(module="candidate1_A", cls="Candidate1Env",
-                        model="ppo_candidate1_A", vecnorm="vecnormalize_candidate1_A.pkl",
-                        log_dir="./training_logs_candidate1_A/"),
-    "candidate2_xcom": dict(module="candidate2_xcom", cls="Candidate2Env",
-                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl",
-                             log_dir="./training_logs_candidate2_xcom/"),
-    "candidate1_B": dict(module="candidate1_B", cls="Candidate1Env",
-                          model="ppo_candidate1_B", vecnorm="vecnormalize_candidate1_B.pkl",
-                          log_dir="./training_logs_candidate1_B/"),
-    "candidate1_C": dict(module="candidate1_C", cls="Candidate1Env",
-                          model="ppo_candidate1_C", vecnorm="vecnormalize_candidate1_C.pkl",
-                          log_dir="./training_logs_candidate1_C/"),
-    "candidate1_D": dict(module="candidate1_D", cls="Candidate1Env",
-                          model="ppo_candidate1_D", vecnorm="vecnormalize_candidate1_D.pkl",
-                          log_dir="./training_logs_candidate1_D/"),
-    "candidate1_E": dict(module="candidate1_E", cls="Candidate1Env",
-                              model="ppo_candidate1_E", vecnorm="vecnormalize_candidate1_E.pkl",
-                              log_dir="./training_logs_candidate1_E/"),
     "candidate1_F": dict(module="candidate1_F", cls="Candidate1Env",
                                   model="ppo_candidate1_F", vecnorm="vecnormalize_candidate1_F.pkl",
                                   log_dir="./training_logs_candidate1_F/"),
+    "candidate2_xcom": dict(module="candidate2_xcom", cls="Candidate2Env",
+                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl",
+                             log_dir="./training_logs_candidate2_xcom/"),
+    "candidate3_capturepoint": dict(module="candidate3_capturepoint", cls="Candidate3Env",
+                                     model="ppo_candidate3_capturepoint", vecnorm="vecnormalize_candidate3_capturepoint.pkl",
+                                     log_dir="./training_logs_candidate3_capturepoint/"),
 }
 
 # Same escalating conditions as the original script.
@@ -53,6 +44,8 @@ CONDITIONS = [
     {"disturb_prob": 1.0, "force_range": (-100, 100)},   # constant, much stronger
 ]
 
+PLOT_DIR = "./perturbation_plots/"
+os.makedirs(PLOT_DIR, exist_ok=True)
 
 def make_venv(EnvClass, cfg, cond, seed=None):
     def _f():
@@ -68,13 +61,19 @@ def make_venv(EnvClass, cfg, cond, seed=None):
     return venv
 
 
-def run_one(key):
+# Label for x-axis: combine disturb_prob and force_range into one readable tick
+def cond_label(cond):
+    return f"p={cond['disturb_prob']}\nF={cond['force_range'][1]}N"
+
+def run_one(key, results_store):
     cfg = CONFIGS[key]
     module = __import__(cfg["module"])
     EnvClass = getattr(module, cfg["cls"])
     model = PPO.load(cfg["model"])
 
     print(f"\n{'#'*60}\n# {key}\n{'#'*60}")
+
+    mean_rewards, mean_abs_errors, labels = [], [], []
 
     for cond in CONDITIONS:
         print(f"\n=== disturb_prob={cond['disturb_prob']}, "
@@ -100,22 +99,78 @@ def run_one(key):
             i = info[0]
             err = i["com_y"] - i["target_y"]
             errors.append(err)
-            print(f"  target_y={i['target_y']:.4f}, final com_y={i['com_y']:.4f}, "
-                  f"error={err:.4f}, failed={i['failed']}")
             venv2.close()
-        print(f"Mean |error| across 10 episodes: {np.mean(np.abs(errors)):.4f}")
+
+        mean_rewards.append(float(np.mean(rewards)))
+        mean_abs_errors.append(float(np.mean(np.abs(errors))))
+        labels.append(cond_label(cond))
+
+    results_store[key] = dict(labels=labels, mean_rewards=mean_rewards,
+                               mean_abs_errors=mean_abs_errors)
+
+
+def plot_all(results_store):
+    """Per-candidate plots (own subfolder) AND one combined overlay per metric."""
+    fig_r_all = go.Figure()
+    fig_e_all = go.Figure()
+
+    for key, res in results_store.items():
+        candidate_dir = os.path.join(PLOT_DIR, key)
+        os.makedirs(candidate_dir, exist_ok=True)
+
+        fig_r = go.Figure()
+        fig_r.add_trace(go.Scatter(x=res["labels"], y=res["mean_rewards"],
+                                    mode="lines+markers", name=key))
+        fig_r.update_layout(title=f"Mean reward vs. disturbance severity ({key})",
+                             xaxis_title="Disturbance condition", yaxis_title="Mean episode reward")
+
+        fig_e = go.Figure()
+        fig_e.add_trace(go.Scatter(x=res["labels"], y=res["mean_abs_errors"],
+                                    mode="lines+markers", name=key))
+        fig_e.update_layout(title=f"Mean |tracking error| vs. disturbance severity ({key})",
+                             xaxis_title="Disturbance condition", yaxis_title="Mean |com_y - target_y| (m)")
+
+        for fig, name in [(fig_r, "perturbation_reward"), (fig_e, "perturbation_error")]:
+            path = os.path.join(candidate_dir, name)
+            try:
+                fig.write_image(path + ".png")
+            except Exception as e:
+                fig.write_html(path + ".html")
+                print(f"PNG export failed ({e}), wrote HTML instead.")
+
+        # add this candidate's line to the combined overlay figures too
+        fig_r_all.add_trace(go.Scatter(x=res["labels"], y=res["mean_rewards"],
+                                        mode="lines+markers", name=key))
+        fig_e_all.add_trace(go.Scatter(x=res["labels"], y=res["mean_abs_errors"],
+                                        mode="lines+markers", name=key))
+
+    fig_r_all.update_layout(title="Mean reward vs. disturbance severity (all candidates)",
+                             xaxis_title="Disturbance condition", yaxis_title="Mean episode reward")
+    fig_e_all.update_layout(title="Mean |tracking error| vs. disturbance severity (all candidates)",
+                             xaxis_title="Disturbance condition", yaxis_title="Mean |com_y - target_y| (m)")
+
+    for fig, name in [(fig_r_all, "all_candidates_reward"), (fig_e_all, "all_candidates_error")]:
+        path = os.path.join(PLOT_DIR, name)
+        try:
+            fig.write_image(path + ".png")
+        except Exception as e:
+            fig.write_html(path + ".html")
+            print(f"PNG export failed ({e}), wrote HTML instead.")
 
 
 def main():
     arg = sys.argv[1] if len(sys.argv) > 1 else "all"
     keys = list(CONFIGS.keys()) if arg == "all" else [arg]
+    results_store = {}
     for key in keys:
         try:
-            run_one(key)
+            run_one(key, results_store)
         except FileNotFoundError as e:
             print(f"\nSkipping {key}: missing model/vecnorm file ({e})")
         except Exception as e:
             print(f"\nSkipping {key}: {type(e).__name__}: {e}")
+    plot_all(results_store)
+    print(f"\nPerturbation plots saved to {PLOT_DIR}")
 
 
 if __name__ == "__main__":

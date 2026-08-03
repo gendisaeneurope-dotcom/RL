@@ -6,6 +6,7 @@ don't have postural_env.py's run_dir/config.json/model structure.
 Usage:
     python plot_candidate.py candidate1
     python plot_candidate.py candidate2_xcom
+    python plot_candidate.py candidate3_capturepoint
 """
 import os
 import sys
@@ -23,27 +24,15 @@ from stable_baselines3.common.monitor import load_results
 JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"]
 
 CONFIGS = {
-    "candidate1_A": dict(module="candidate1_A", cls="Candidate1Env",
-                        model="ppo_candidate1_A", vecnorm="vecnormalize_candidate1_A.pkl",
-                        log_dir="./training_logs_candidate1_A/"),
-    "candidate2_xcom": dict(module="candidate2_xcom", cls="Candidate2Env",
-                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl",
-                             log_dir="./training_logs_candidate2_xcom/"),
-    "candidate1_B": dict(module="candidate1_B", cls="Candidate1Env",
-                          model="ppo_candidate1_B", vecnorm="vecnormalize_candidate1_B.pkl",
-                          log_dir="./training_logs_candidate1_B/"),
-    "candidate1_C": dict(module="candidate1_C", cls="Candidate1Env",
-                          model="ppo_candidate1_C", vecnorm="vecnormalize_candidate1_C.pkl",
-                          log_dir="./training_logs_candidate1_C/"),
-    "candidate1_D": dict(module="candidate1_D", cls="Candidate1Env",
-                          model="ppo_candidate1_D", vecnorm="vecnormalize_candidate1_D.pkl",
-                          log_dir="./training_logs_candidate1_D/"),
-    "candidate1_E": dict(module="candidate1_E", cls="Candidate1Env",
-                              model="ppo_candidate1_E", vecnorm="vecnormalize_candidate1_E.pkl",
-                              log_dir="./training_logs_candidate1_E/"),
     "candidate1_F": dict(module="candidate1_F", cls="Candidate1Env",
                                   model="ppo_candidate1_F", vecnorm="vecnormalize_candidate1_F.pkl",
                                   log_dir="./training_logs_candidate1_F/"),
+    "candidate2_xcom": dict(module="candidate2_xcom", cls="Candidate2Env",
+                             model="ppo_candidate2_xcom", vecnorm="vecnormalize_candidate2_xcom.pkl",
+                             log_dir="./training_logs_candidate2_xcom/"),
+    "candidate3_capturepoint": dict(module="candidate3_capturepoint", cls="Candidate3Env",
+                                     model="ppo_candidate3_capturepoint", vecnorm="vecnormalize_candidate3_capturepoint.pkl",
+                                     log_dir="./training_logs_candidate3_capturepoint/"),
 }
 
 
@@ -86,7 +75,8 @@ def collect_episodes(cfg, EnvClass, n_episodes=20):
             i0 = info[0]
             row.update({
                 "reward": float(reward[0]), "cum_reward": total_reward,
-                "com_y": float(i0["com_y"]), "target_y": float(i0["target_y"]),
+                "com_y": float(i0["com_y"]), "com_x": float(i0.get("com_x", 0.0)),  # <-- add com_x
+                "target_y": float(i0["target_y"]),
                 "h": float(i0["h"]), "xcom_y": float(i0["xcom_y"]),
                 "failed": bool(i0["failed"]),
             })
@@ -166,6 +156,22 @@ def make_plots(out_dir, df, summary, base_half_width, joint_gears, title_tag, lo
     fig.update_layout(title=f"Training reward per episode ({title_tag})")
     _save(fig, os.path.join(out_dir, "training_reward"))
 
+def com_xy_plot(df, outdir, title_tag):
+    """
+    CoM-x vs. CoM-y, NOT vs. time -- shows the actual 2D movement path of
+    the center of mass across the base of support. One line per episode.
+    """
+    fig = go.Figure()
+    for ep, d in df.groupby("episode"):
+        t = d["target_y"].iloc[0]
+        fig.add_trace(go.Scatter(
+            x=d["com_x"], y=d["com_y"], mode="lines",
+            name=f"ep {ep} (target={t:.3f})", opacity=0.6
+        ))
+    fig.update_layout(title=f"CoM-x vs. CoM-y trajectory, all episodes {title_tag}",
+                       xaxis_title="CoM x (m, anterior-posterior)",
+                       yaxis_title="CoM y (m, mediolateral)")
+    _save(fig, os.path.join(outdir, "com_x_vs_y"))
 
 if __name__ == "__main__":
     key = sys.argv[1] if len(sys.argv) > 1 else "candidate1"
@@ -180,4 +186,5 @@ if __name__ == "__main__":
 
     out_dir = os.path.join(cfg["log_dir"], "plots")
     make_plots(out_dir, df, summary, bhw, gears, key, cfg["log_dir"])
+    com_xy_plot(df, out_dir, key)
     print(f"\nPlots saved to {out_dir}/")
