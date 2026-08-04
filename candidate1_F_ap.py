@@ -26,9 +26,9 @@ JOINT_LOW = np.radians([-35.0, -50.0, -50.0, -30.0])
 JOINT_HIGH = np.radians([35.0, 50.0, 30.0, 120.0])
 FAIL_MARGIN = 0.95
 
-TARGET_X_LOW = -0.5
-TARGET_X_HIGH = -0.3
-TARGET_SPAN = 0.5   # normalization denominator, matches max magnitude requested
+TARGET_X_LOW = -0.1
+TARGET_X_HIGH = 0.1
+TARGET_SPAN = 0.5   
 
 OMEGA = 0.2
 SHAPING_WEIGHT = 20.0
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     env = VecNormalize(env, norm_obs=False, norm_reward=True)
     model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
                 learning_rate=3e-4, gamma=0.99, verbose=1)
-    model.learn(total_timesteps=1_000_000)
+    model.learn(total_timesteps=3_000_000)
     model.save("ppo_candidate1_F_ap")
     env.save("vecnormalize_candidate1_F_ap.pkl")
     env.close()

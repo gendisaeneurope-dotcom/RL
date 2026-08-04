@@ -104,9 +104,10 @@ def collect_meanstd(cfg, EnvClass, fixed_target, n_episodes=20):
         venv.training = False
         venv.norm_reward = False
         obs = venv.reset()
+        venv.env_method("reset", indices=[0], seed=ep)  # force per-episode variation
         done, traj = False, []
         while not done:
-            action, _ = model.predict(obs, deterministic=True)
+            action, _ = model.predict(obs, deterministic=False)
             obs, _, done_v, info = venv.step(action)
             done = bool(done_v[0])
             traj.append(info[0]["com_x"])
