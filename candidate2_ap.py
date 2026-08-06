@@ -51,7 +51,7 @@ USE_SHAPING = False
 # new: XCoM safety weight. Start small and increase only if the safety
 # term has no visible effect -- an overly strong safety weight is what
 # caused the fixed-point bugs before, since it can dominate tracking.
-SAFETY_WEIGHT = 0.3
+SAFETY_WEIGHT = 0.05
 
 
 class Candidate2Env(AnkleHipEnv):
@@ -60,7 +60,7 @@ class Candidate2Env(AnkleHipEnv):
     def __init__(self, target_x_low=TARGET_X_LOW, target_x_high=TARGET_X_HIGH, fixed_target=None, omega=OMEGA,
                  shaping_weight=SHAPING_WEIGHT, nd_cap=ND_CAP, use_shaping=USE_SHAPING,
                  eps_pos=EPS_POS, eps_vel=EPS_VEL, safety_weight=SAFETY_WEIGHT,
-                 disturb_prob=0.0, force_range=(-20, 20), **kwargs):
+                 disturb_prob=0.1, force_range=(-30, 30), **kwargs):
         super().__init__(xml_file=XML_PATH, **kwargs)
         self.action_space = spaces.Box(-1.0, 1.0, (N_JOINTS,), np.float32)
         self.observation_space = spaces.Box(-np.inf, np.inf, (2 * N_JOINTS + 3,), np.float64)
@@ -127,7 +127,7 @@ class Candidate2Env(AnkleHipEnv):
         mujoco.mj_forward(self.model, self.data)
     # Shift toward CoM-x = 0.5 by nudging ankle_flexion (front-back lean).
     # This is a simple proportional offset
-        target_start_x = 0.45
+        target_start_x = float(self.np_random.uniform(self.target_x_low, self.target_x_high))
         for _ in range(150):
             com_x, _ = self._com_xy()
             error = target_start_x - com_x
@@ -218,12 +218,12 @@ class Candidate2Env(AnkleHipEnv):
 
 
 if __name__ == "__main__":
-    log_dir = "./training_logs_candidate2_ap/"
+    log_dir = "./training_logs_candidate2_ap_start/"
     os.makedirs(log_dir, exist_ok=True)
 
     def make_env(rank):
         def _f():
-            e = Candidate2Env()
+            e = Candidate2Env(disturb_prob=0.1, force_range=(-30, 30))
             e = TimeLimit(e, max_episode_steps=1000)
             e = Monitor(e, os.path.join(log_dir, f"monitor_{rank}"))
             return e
@@ -236,6 +236,6 @@ if __name__ == "__main__":
     model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
                 learning_rate=3e-4, gamma=0.99, verbose=1)
     model.learn(total_timesteps=3_000_000)
-    model.save("ppo_candidate2_ap")
-    env.save("vecnormalize_candidate2_ap.pkl")
+    model.save("ppo_candidate2_ap_start")
+    env.save("vecnormalize_candidate2_ap_start.pkl")
     env.close()

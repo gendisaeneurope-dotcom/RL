@@ -24,16 +24,27 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 CONFIGS = {
-
     "candidate1_F_ap": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                                  model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
-                                  log_dir="./training_logs_candidate1_F_ap/"),
+                             model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
+                             log_dir="./training_logs_candidate1_F_ap/"),
+    "candidate1_ap_start": dict(module="candidate1_F_ap", cls="Candidate1Env",
+                                 model="ppo_candidate1_ap_start", vecnorm="vecnormalize_candidate1_ap_start.pkl",
+                                 log_dir="./training_logs_candidate1_ap_start/"),
     "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
-                             model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
-                             log_dir="./training_logs_candidate2_ap/"),
+                           model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
+                           log_dir="./training_logs_candidate2_ap/"),
+    "candidate2_ap_start": dict(module="candidate2_ap", cls="Candidate2Env",
+                                 model="ppo_candidate2_ap_start", vecnorm="vecnormalize_candidate2_ap_start.pkl",
+                                 log_dir="./training_logs_candidate2_ap_start/"),
+    "candidate2_ap_sw005_01disturb": dict(module="candidate2_ap_disturb", cls="Candidate2Env",
+                                            model="ppo_candidate2_ap_sw005_01disturb", vecnorm="vecnormalize_candidate2_ap_sw005_01disturb.pkl",
+                                            log_dir="./training_logs_candidate2_ap_sw005_01disturb/"),
     "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
-                                     model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
-                                     log_dir="./training_logs_candidate3_ap/"),
+                           model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
+                           log_dir="./training_logs_candidate3_ap/"),
+    "candidate3_ap_start": dict(module="candidate3_ap", cls="Candidate3Env",
+                                 model="ppo_candidate3_ap_start", vecnorm="vecnormalize_candidate3_ap_start.pkl",
+                                 log_dir="./training_logs_candidate3_ap_start/"),
 }
 
 # Same escalating conditions as the original script.
@@ -66,7 +77,7 @@ def make_venv(EnvClass, cfg, cond, seed=None):
 def cond_label(cond):
     return f"p={cond['disturb_prob']}\nF={cond['force_range'][1]}N"
 
-def run_one(key, results_store):
+def run_one(key, results_store, seed=None):
     cfg = CONFIGS[key]
     module = __import__(cfg["module"])
     EnvClass = getattr(module, cfg["cls"])
@@ -80,7 +91,7 @@ def run_one(key, results_store):
         print(f"\n=== disturb_prob={cond['disturb_prob']}, "
               f"force_range={cond['force_range']} ===")
 
-        venv = make_venv(EnvClass, cfg, cond)
+        venv = make_venv(EnvClass, cfg, cond, seed=seed)
         rewards, lengths = evaluate_policy(model, venv, n_eval_episodes=20,
                                            return_episode_rewards=True)
         venv.close()
@@ -206,11 +217,12 @@ def plot_perturbation_trajectories(env_cls, model, vecnorm_path, out_dir,
 
 def main():
     arg = sys.argv[1] if len(sys.argv) > 1 else "all"
+    seed = int(sys.argv[2]) if len(sys.argv) > 2 else None
     keys = list(CONFIGS.keys()) if arg == "all" else [arg]
     results_store = {}
     for key in keys:
         try:
-            run_one(key, results_store)
+            run_one(key, results_store, seed=seed)
         except FileNotFoundError as e:
             print(f"\nSkipping {key}: missing model/vecnorm file ({e})")
         except Exception as e:

@@ -65,7 +65,7 @@ USE_SHAPING = False
 # comparison if this term is structurally "softer" as expected, it may
 # tolerate a higher weight before causing fixed-point issues. Tune only
 # after confirming target-tracking still works at weight=1.0.
-SAFETY_WEIGHT = 1.0
+SAFETY_WEIGHT = 0.5
 
 
 class Candidate3Env(AnkleHipEnv):
@@ -137,7 +137,7 @@ class Candidate3Env(AnkleHipEnv):
         self.data.qvel[:N_JOINTS] *= 0.1
         mujoco.mj_forward(self.model, self.data)
 
-        target_start_x = 0.45
+        target_start_x = float(self.np_random.uniform(self.target_x_low, self.target_x_high))
         for _ in range(150):
             com_x, _ = self._com_xy()
             error = target_start_x - com_x
@@ -226,7 +226,7 @@ class Candidate3Env(AnkleHipEnv):
 
 
 if __name__ == "__main__":
-    log_dir = "./training_logs_candidate3_ap/"
+    log_dir = "./training_logs_candidate3_ap_start/"
     os.makedirs(log_dir, exist_ok=True)
 
     def make_env(rank):
@@ -244,6 +244,6 @@ if __name__ == "__main__":
     model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
                 learning_rate=3e-4, gamma=0.99, verbose=1)
     model.learn(total_timesteps=3_000_000)
-    model.save("ppo_candidate3_ap")
-    env.save("vecnormalize_candidate3_ap.pkl")
+    model.save("ppo_candidate3_ap_start")
+    env.save("vecnormalize_candidate3_ap_start.pkl")
     env.close()

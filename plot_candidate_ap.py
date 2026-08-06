@@ -7,11 +7,11 @@ Usage:
     python plot_candidate_ap.py candidate1_F_ap
     python plot_candidate_ap.py candidate2_ap
     python plot_candidate_ap.py candidate3_ap
+    python plot_candidate_ap.py candidate2_ap --meanstd
 """
 import os
 import sys
 import math
-import argparse
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -22,19 +22,32 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import load_results
 
+
 JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"]
 
-CONFIGS = {
 
+CONFIGS = {
     "candidate1_F_ap": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                                  model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
-                                  log_dir="./training_logs_candidate1_F_ap/"),
+                             model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
+                             log_dir="./training_logs_candidate1_F_ap/"),
+    "candidate1_ap_start": dict(module="candidate1_F_ap", cls="Candidate1Env",
+                                 model="ppo_candidate1_ap_start", vecnorm="vecnormalize_candidate1_ap_start.pkl",
+                                 log_dir="./training_logs_candidate1_ap_start/"),
     "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
-                             model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
-                             log_dir="./training_logs_candidate2_ap/"),
+                           model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
+                           log_dir="./training_logs_candidate2_ap/"),
+    "candidate2_ap_start": dict(module="candidate2_ap", cls="Candidate2Env",
+                                 model="ppo_candidate2_ap_start", vecnorm="vecnormalize_candidate2_ap_start.pkl",
+                                 log_dir="./training_logs_candidate2_ap_start/"),
+    "candidate2_ap_sw005_01disturb": dict(module="candidate2_ap_disturb", cls="Candidate2Env",
+                                            model="ppo_candidate2_ap_sw005_01disturb", vecnorm="vecnormalize_candidate2_ap_sw005_01disturb.pkl",
+                                            log_dir="./training_logs_candidate2_ap_sw005_01disturb/"),
     "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
-                                     model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
-                                     log_dir="./training_logs_candidate3_ap/"),
+                           model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
+                           log_dir="./training_logs_candidate3_ap/"),
+    "candidate3_ap_start": dict(module="candidate3_ap", cls="Candidate3Env",
+                                 model="ppo_candidate3_ap_start", vecnorm="vecnormalize_candidate3_ap_start.pkl",
+                                 log_dir="./training_logs_candidate3_ap_start/"),
 }
 
 
@@ -55,6 +68,7 @@ def collect_episodes(cfg, EnvClass, n_episodes=20):
         venv.training = False
         venv.norm_reward = False
 
+        venv.seed(ep)
         obs = venv.reset()
         raw = venv.venv.envs[0].unwrapped
         gears = raw.model.actuator_gear[:, 0].copy()
@@ -81,7 +95,7 @@ def collect_episodes(cfg, EnvClass, n_episodes=20):
                 "target_x": float(i0["target_x"]),
                 "h": float(i0["h"]), "xcom_x": float(i0["xcom_x"]),
                 "failed": bool(i0["failed"]),
-                })
+            })
             rows.append(row)
         venv.close()
 
@@ -95,50 +109,62 @@ def collect_episodes(cfg, EnvClass, n_episodes=20):
     return df, summary
 
 
-def collect_meanstd(cfg, EnvClass, fixed_target, n_episodes=20):
+def collect_meanstd(cfg, EnvClass, n_episodes=20, deterministic=False):
+    """
+    Collects per-episode CoM-x TRACKING ERROR trajectories (com_x - target_x),
+    not raw CoM-x. Each episode samples its own random in-distribution target
+    (same default sampling the env normally uses), matching collect_episodes.
+    Plotting the error instead of raw position means episodes with different
+    targets are directly comparable, and there is no fixed_target to hardcode
+    or let go stale when the training target range changes.
+    """
     model = PPO.load(cfg["model"])
-    all_traj = []
+    all_err, targets_used = [], []
     for ep in range(n_episodes):
-        venv = DummyVecEnv([lambda: TimeLimit(EnvClass(fixed_target=fixed_target), max_episode_steps=1000)])
+        venv = DummyVecEnv([lambda: TimeLimit(EnvClass(), max_episode_steps=1000)])
         venv = VecNormalize.load(cfg["vecnorm"], venv)
         venv.training = False
         venv.norm_reward = False
+
+        venv.seed(ep)
         obs = venv.reset()
-        venv.env_method("reset", indices=[0], seed=ep)  # force per-episode variation
-        done, traj = False, []
+
+        done, err_traj, tgt = False, [], None
         while not done:
-            action, _ = model.predict(obs, deterministic=False)
+            action, _ = model.predict(obs, deterministic=deterministic)
             obs, _, done_v, info = venv.step(action)
             done = bool(done_v[0])
-            traj.append(info[0]["com_x"])
+            i0 = info[0]
+            if tgt is None:
+                tgt = float(i0["target_x"])
+            err_traj.append(float(i0["com_x"]) - float(i0["target_x"]))
         venv.close()
-        all_traj.append(traj)
-    max_len = max(len(t) for t in all_traj)
-    padded = np.array([t + [t[-1]] * (max_len - len(t)) for t in all_traj])
-    return padded.mean(axis=0), padded.std(axis=0)
+        all_err.append(err_traj)
+        targets_used.append(tgt)
+
+    max_len = max(len(t) for t in all_err)
+    padded = np.array([t + [t[-1]] * (max_len - len(t)) for t in all_err])
+    return padded.mean(axis=0), padded.std(axis=0), targets_used
 
 
-def meanstd_plot(cfg, EnvClass, out_dir, title_tag, fixed_target=-0.4, n_episodes=20):
-    mean, std = collect_meanstd(cfg, EnvClass, fixed_target, n_episodes)
-    x = np.arange(len(mean))
+def meanstd_plot(cfg, EnvClass, out_dir, title_tag, n_episodes=20, deterministic=False):
+    mean_err, std_err, targets_used = collect_meanstd(
+        cfg, EnvClass, n_episodes=n_episodes, deterministic=deterministic
+    )
+    x = np.arange(len(mean_err))
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=mean, mode="lines", name="CoM-x mean", line=dict(color="royalblue")))
+    fig.add_trace(go.Scatter(x=x, y=mean_err, mode="lines", name="CoM-x error mean", line=dict(color="royalblue")))
     fig.add_trace(go.Scatter(x=np.concatenate([x, x[::-1]]),
-                              y=np.concatenate([mean + std, (mean - std)[::-1]]),
+                              y=np.concatenate([mean_err + std_err, (mean_err - std_err)[::-1]]),
                               fill="toself", fillcolor="royalblue", opacity=0.2,
                               line=dict(width=0), showlegend=False))
-    fig.add_hline(y=fixed_target, line=dict(dash="dot", color="firebrick"), annotation_text="target")
-    fig.update_layout(title=f"CoM-x mean +/- std over time (target={fixed_target}, {title_tag})",
-                       xaxis_title="step", yaxis_title="CoM-x (m)")
+    fig.add_hline(y=0.0, line=dict(dash="dot", color="firebrick"), annotation_text="perfect tracking")
+    tmin, tmax = min(targets_used), max(targets_used)
+    fig.update_layout(
+        title=f"CoM-x tracking error mean +/- std over time "
+              f"(targets sampled in [{tmin:.3f}, {tmax:.3f}], {title_tag})",
+        xaxis_title="step", yaxis_title="com_x - target_x (m)")
     _save(fig, os.path.join(out_dir, "com_x_meanstd"))
-
-    summary = df.groupby("episode").agg(
-    total_reward=("reward", "sum"), steps=("step", "max"),
-    target_x=("target_x", "first"), final_com_x=("com_x", "last"),
-    final_h=("h", "last"), failed=("failed", "last"),
-    ).reset_index()
-    summary["final_error"] = summary["final_com_x"] - summary["target_x"]
-    return df, summary
 
 
 def make_plots(out_dir, df, summary, base_half_length, joint_gears, title_tag, log_dir):
@@ -204,6 +230,7 @@ def make_plots(out_dir, df, summary, base_half_length, joint_gears, title_tag, l
     fig.update_layout(title=f"Training reward per episode ({title_tag})")
     _save(fig, os.path.join(out_dir, "training_reward"))
 
+
 def com_xy_plot(df, outdir, title_tag):
     """
     CoM-x vs. CoM-y, NOT vs. time -- shows the actual 2D movement path of
@@ -221,9 +248,10 @@ def com_xy_plot(df, outdir, title_tag):
                        yaxis_title="CoM y (m, mediolateral)")
     _save(fig, os.path.join(outdir, "com_x_vs_y"))
 
+
 if __name__ == "__main__":
     key = sys.argv[1] if len(sys.argv) > 1 else "candidate1"
-    do_meanstd = "--meanstd" in sys.argv        
+    do_meanstd = "--meanstd" in sys.argv
     cfg = CONFIGS[key]
     module = __import__(cfg["module"])
     EnvClass = getattr(module, cfg["cls"])
@@ -238,6 +266,6 @@ if __name__ == "__main__":
     com_xy_plot(df, out_dir, key)
 
     if do_meanstd:
-        meanstd_plot(cfg, EnvClass, out_dir, key, fixed_target=-0.4)
+        meanstd_plot(cfg, EnvClass, out_dir, key)
 
     print(f"\nPlots saved to {out_dir}/")

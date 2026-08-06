@@ -17,16 +17,27 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"]
 
 CONFIGS = {
-
     "candidate1_F_ap": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                                  model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
-                                  log_dir="./training_logs_candidate1_F_ap/"),
+                             model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
+                             log_dir="./training_logs_candidate1_F_ap/"),
+    "candidate1_ap_start": dict(module="candidate1_F_ap", cls="Candidate1Env",
+                                 model="ppo_candidate1_ap_start", vecnorm="vecnormalize_candidate1_ap_start.pkl",
+                                 log_dir="./training_logs_candidate1_ap_start/"),
     "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
-                             model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
-                             log_dir="./training_logs_candidate2_ap/"),
+                           model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
+                           log_dir="./training_logs_candidate2_ap/"),
+    "candidate2_ap_start": dict(module="candidate2_ap", cls="Candidate2Env",
+                                 model="ppo_candidate2_ap_start", vecnorm="vecnormalize_candidate2_ap_start.pkl",
+                                 log_dir="./training_logs_candidate2_ap_start/"),
+    "candidate2_ap_sw005_01disturb": dict(module="candidate2_ap_disturb", cls="Candidate2Env",
+                                            model="ppo_candidate2_ap_sw005_01disturb", vecnorm="vecnormalize_candidate2_ap_sw005_01disturb.pkl",
+                                            log_dir="./training_logs_candidate2_ap_sw005_01disturb/"),
     "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
-                                     model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
-                                     log_dir="./training_logs_candidate3_ap/"),
+                           model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
+                           log_dir="./training_logs_candidate3_ap/"),
+    "candidate3_ap_start": dict(module="candidate3_ap", cls="Candidate3Env",
+                                 model="ppo_candidate3_ap_start", vecnorm="vecnormalize_candidate3_ap_start.pkl",
+                                 log_dir="./training_logs_candidate3_ap_start/"),
 }
 
 
@@ -108,7 +119,7 @@ def run(key):
     print("-" * 100)
 
     for kind, val in conditions:
-        for seed in [0, 1, 2, 3, 4]:
+        for seed in range(20):
             n, q, info = rollout(model, EnvClass, cfg, fixed_target=val, seed=seed)
 
             frac = np.where(
