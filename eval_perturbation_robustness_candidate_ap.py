@@ -7,9 +7,6 @@ Adapted for the standalone candidate1_target.py / candidate2_xcom.py, which
 don't have postural_env.py's run_dir/config.json/model structure -- uses the
 same CONFIGS dict pattern as plot_candidate.py / why_failed_candidate.py.
 
-Model is always loaded as trained WITHOUT perturbation; disturbance is
-introduced here, at test time only.
-
     python eval_perturbation_robustness_candidate_ap.py candidate1_F_ap
     python eval_perturbation_robustness_candidate_ap.py candidate2_ap
     python eval_perturbation_robustness_candidate_ap.py candidate3_ap
@@ -23,31 +20,56 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
+
 CONFIGS = {
     "candidate1_F_ap": dict(module="candidate1_F_ap", cls="Candidate1Env",
                              model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
                              log_dir="./training_logs_candidate1_F_ap/"),
-    "candidate1_ap_start": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                                 model="ppo_candidate1_ap_start", vecnorm="vecnormalize_candidate1_ap_start.pkl",
-                                 log_dir="./training_logs_candidate1_ap_start/"),
+
+    "candidate1_ap_perturbed": dict(module="candidate1_F_ap", cls="Candidate1Env",
+                                 model="ppo_candidate1_ap_perturbed", vecnorm="vecnormalize_candidate1_ap_perturbed.pkl",
+                                 log_dir="./training_logs_candidate1_ap_perturbed/"),
+
     "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
                            model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
                            log_dir="./training_logs_candidate2_ap/"),
-    "candidate2_ap_start": dict(module="candidate2_ap", cls="Candidate2Env",
-                                 model="ppo_candidate2_ap_start", vecnorm="vecnormalize_candidate2_ap_start.pkl",
-                                 log_dir="./training_logs_candidate2_ap_start/"),
+    "candidate2_ap_w01": dict(module="candidate2_ap", cls="Candidate2Env",
+                               model="ppo_candidate2_ap_w01", vecnorm="vecnormalize_candidate2_ap_w01.pkl",
+                               log_dir="./training_logs_candidate2_ap_w01/"),
+    "candidate2_ap_w015": dict(module="candidate2_ap", cls="Candidate2Env",
+                                   model="ppo_candidate2_ap_w015", vecnorm="vecnormalize_candidate2_ap_w015.pkl",
+                                   log_dir="./training_logs_candidate2_ap_w015/"),
+    "candidate2_ap_w02": dict(module="candidate2_ap", cls="Candidate2Env",
+                                   model="ppo_candidate2_ap_w02", vecnorm="vecnormalize_candidate2_ap_w02.pkl",
+                                   log_dir="./training_logs_candidate2_ap_w02/"),
+    "candidate2_ap_w025": dict(module="candidate2_ap", cls="Candidate2Env",
+                                   model="ppo_candidate2_ap_w025", vecnorm="vecnormalize_candidate2_ap_w025.pkl",
+                                   log_dir="./training_logs_candidate2_ap_w025/"),
+    "candidate2_ap_perturbed": dict(module="candidate2_ap", cls="Candidate2Env",
+                                 model="ppo_candidate2_ap_perturbed", vecnorm="vecnormalize_candidate2_ap_perturbed.pkl",
+                                 log_dir="./training_logs_candidate2_ap_perturbed/"),
+    "candidate2_ap_comy": dict(module="candidate2_ap", cls="Candidate2Env",
+                                     model="ppo_candidate2_ap_comy", vecnorm="vecnormalize_candidate2_ap_comy.pkl",
+                                     log_dir="./training_logs_candidate2_ap_comy/"),
+    "candidate2_ap_comy": dict(module="candidate2_ap", cls="Candidate2Env",
+                                     model="ppo_candidate2_ap_comy", vecnorm="vecnormalize_candidate2_ap_comy.pkl",
+                                     log_dir="./training_logs_candidate2_ap_comy/"),
+
     "candidate2_ap_sw005_01disturb": dict(module="candidate2_ap_disturb", cls="Candidate2Env",
                                             model="ppo_candidate2_ap_sw005_01disturb", vecnorm="vecnormalize_candidate2_ap_sw005_01disturb.pkl",
                                             log_dir="./training_logs_candidate2_ap_sw005_01disturb/"),
+
     "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
                            model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
                            log_dir="./training_logs_candidate3_ap/"),
-    "candidate3_ap_start": dict(module="candidate3_ap", cls="Candidate3Env",
-                                 model="ppo_candidate3_ap_start", vecnorm="vecnormalize_candidate3_ap_start.pkl",
-                                 log_dir="./training_logs_candidate3_ap_start/"),
+
+    "candidate3_ap_perturbed": dict(module="candidate3_ap", cls="Candidate3Env",
+                                 model="ppo_candidate3_ap_perturbed", vecnorm="vecnormalize_candidate3_ap_perturbed.pkl",
+                                 log_dir="./training_logs_candidate3_ap_perturbed/"),
 }
 
-# Same escalating conditions as the original script.
+# Same escalating conditions as the original script -- used for the reward/error
+# severity sweep only. NOT used for the single-condition trajectory plot below.
 CONDITIONS = [
     {"disturb_prob": 0.0, "force_range": (-20, 20)},     # baseline, no disturbance
     {"disturb_prob": 0.05, "force_range": (-20, 20)},    # light, occasional
@@ -56,8 +78,15 @@ CONDITIONS = [
     {"disturb_prob": 1.0, "force_range": (-100, 100)},   # constant, much stronger
 ]
 
+# Single condition used for the trajectory (time/xy) plots, kept in sync with
+# plot_candidate_ap.py's --perturb setting so the two scripts' trajectory
+# plots are directly comparable.
+TRAJ_DISTURB_PROB = 0.0
+TRAJ_FORCE_RANGE = (-30, 30)
+
 PLOT_DIR = "./perturbation_plots/"
 os.makedirs(PLOT_DIR, exist_ok=True)
+
 
 def make_venv(EnvClass, cfg, cond, seed=None):
     def _f():
@@ -73,9 +102,9 @@ def make_venv(EnvClass, cfg, cond, seed=None):
     return venv
 
 
-# Label for x-axis: combine disturb_prob and force_range into one readable tick
 def cond_label(cond):
     return f"p={cond['disturb_prob']}\nF={cond['force_range'][1]}N"
+
 
 def run_one(key, results_store, seed=None):
     cfg = CONFIGS[key]
@@ -119,10 +148,11 @@ def run_one(key, results_store, seed=None):
 
     results_store[key] = dict(labels=labels, mean_rewards=mean_rewards,
                                mean_abs_errors=mean_abs_errors)
-    
+
     candidate_dir = os.path.join(PLOT_DIR, key)
     plot_perturbation_trajectories(EnvClass, model, cfg["vecnorm"], out_dir=candidate_dir,
-                                     disturb_prob=0.3, force_range=(-20, 20))
+                                     disturb_prob=TRAJ_DISTURB_PROB, force_range=TRAJ_FORCE_RANGE)
+
 
 def plot_all(results_store):
     """Per-candidate plots (own subfolder) AND one combined overlay per metric."""
@@ -153,7 +183,6 @@ def plot_all(results_store):
                 fig.write_html(path + ".html")
                 print(f"PNG export failed ({e}), wrote HTML instead.")
 
-        # add this candidate's line to the combined overlay figures too
         fig_r_all.add_trace(go.Scatter(x=res["labels"], y=res["mean_rewards"],
                                         mode="lines+markers", name=key))
         fig_e_all.add_trace(go.Scatter(x=res["labels"], y=res["mean_abs_errors"],
@@ -172,9 +201,9 @@ def plot_all(results_store):
             fig.write_html(path + ".html")
             print(f"PNG export failed ({e}), wrote HTML instead.")
 
+
 def plot_perturbation_trajectories(env_cls, model, vecnorm_path, out_dir,
-                                     disturb_prob=0.3, force_range=(-20, 20), episodes=10):
-    import plotly.graph_objects as go
+                                     disturb_prob=TRAJ_DISTURB_PROB, force_range=TRAJ_FORCE_RANGE, episodes=10):
     venv = DummyVecEnv([lambda: TimeLimit(
         env_cls(disturb_prob=disturb_prob, force_range=force_range),
         max_episode_steps=1000)])

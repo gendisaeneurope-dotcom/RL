@@ -4,7 +4,7 @@ candidate1_target.py / candidate2_xcom.py outputs, which don't share
 postural_env.py's module-level JOINT_RANGE / FAIL_MARGIN constants.
 
 Usage:
-    python why_failed_candidate_ap.py candidate1_F_ap
+    python why_failed_candidate_ap.py candidate1_ap
     python why_failed_candidate_ap.py candidate2_ap
     python why_failed_candidate_ap.py candidate3_ap
 """
@@ -17,27 +17,24 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"]
 
 CONFIGS = {
-    "candidate1_F_ap": dict(module="candidate1_F_ap", cls="Candidate1Env",
+    "candidate1_ap": dict(module="candidate1_ap", cls="Candidate1Env",
                              model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
                              log_dir="./training_logs_candidate1_F_ap/"),
-    "candidate1_ap_start": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                                 model="ppo_candidate1_ap_start", vecnorm="vecnormalize_candidate1_ap_start.pkl",
-                                 log_dir="./training_logs_candidate1_ap_start/"),
+    "candidate1_ap_comy1": dict(module="candidate1_ap", cls="Candidate1Env",
+                                     model="ppo_candidate1_ap_comy1", vecnorm="vecnormalize_candidate1_ap_comy1.pkl",
+                                     log_dir="./training_logs_candidate1_ap_comy1/"),                          
     "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
                            model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
                            log_dir="./training_logs_candidate2_ap/"),
-    "candidate2_ap_start": dict(module="candidate2_ap", cls="Candidate2Env",
-                                 model="ppo_candidate2_ap_start", vecnorm="vecnormalize_candidate2_ap_start.pkl",
-                                 log_dir="./training_logs_candidate2_ap_start/"),
-    "candidate2_ap_sw005_01disturb": dict(module="candidate2_ap_disturb", cls="Candidate2Env",
-                                            model="ppo_candidate2_ap_sw005_01disturb", vecnorm="vecnormalize_candidate2_ap_sw005_01disturb.pkl",
-                                            log_dir="./training_logs_candidate2_ap_sw005_01disturb/"),
+    "candidate2_ap_comy1": dict(module="candidate2_ap", cls="Candidate2Env",
+                               model="ppo_candidate2_ap_comy1", vecnorm="vecnormalize_candidate2_ap_comy1.pkl",
+                               log_dir="./training_logs_candidate2_ap_comy1/"),
     "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
                            model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
                            log_dir="./training_logs_candidate3_ap/"),
-    "candidate3_ap_start": dict(module="candidate3_ap", cls="Candidate3Env",
-                                 model="ppo_candidate3_ap_start", vecnorm="vecnormalize_candidate3_ap_start.pkl",
-                                 log_dir="./training_logs_candidate3_ap_start/"),
+    "candidate3_ap_comy1": dict(module="candidate3_ap", cls="Candidate3Env",
+                                model="ppo_candidate3_ap_comy1", vecnorm="vecnormalize_candidate3_ap_comy1.pkl",
+                                log_dir="./training_logs_candidate3_ap_comy1/"),
 }
 
 
@@ -140,5 +137,5 @@ def run(key):
 
 
 if __name__ == "__main__":
-    key = sys.argv[1] if len(sys.argv) > 1 else "candidate1_F_ap"
+    key = sys.argv[1] if len(sys.argv) > 1 else "candidate1_ap"
     run(key)

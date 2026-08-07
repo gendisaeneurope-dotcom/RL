@@ -27,27 +27,24 @@ JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"
 
 
 CONFIGS = {
-    "candidate1_F_ap": dict(module="candidate1_F_ap", cls="Candidate1Env",
+    "candidate1_ap": dict(module="candidate1_ap", cls="Candidate1Env",
                              model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
                              log_dir="./training_logs_candidate1_F_ap/"),
-    "candidate1_ap_start": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                                 model="ppo_candidate1_ap_start", vecnorm="vecnormalize_candidate1_ap_start.pkl",
-                                 log_dir="./training_logs_candidate1_ap_start/"),
+    "candidate1_ap_comy1": dict(module="candidate1_ap", cls="Candidate1Env",
+                                     model="ppo_candidate1_ap_comy1", vecnorm="vecnormalize_candidate1_ap_comy1.pkl",
+                                     log_dir="./training_logs_candidate1_ap_comy1/"),                          
     "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
                            model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
                            log_dir="./training_logs_candidate2_ap/"),
-    "candidate2_ap_start": dict(module="candidate2_ap", cls="Candidate2Env",
-                                 model="ppo_candidate2_ap_start", vecnorm="vecnormalize_candidate2_ap_start.pkl",
-                                 log_dir="./training_logs_candidate2_ap_start/"),
-    "candidate2_ap_sw005_01disturb": dict(module="candidate2_ap_disturb", cls="Candidate2Env",
-                                            model="ppo_candidate2_ap_sw005_01disturb", vecnorm="vecnormalize_candidate2_ap_sw005_01disturb.pkl",
-                                            log_dir="./training_logs_candidate2_ap_sw005_01disturb/"),
+    "candidate2_ap_comy1": dict(module="candidate2_ap", cls="Candidate2Env",
+                               model="ppo_candidate2_ap_comy1", vecnorm="vecnormalize_candidate2_ap_comy1.pkl",
+                               log_dir="./training_logs_candidate2_ap_comy1/"),
     "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
                            model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
                            log_dir="./training_logs_candidate3_ap/"),
-    "candidate3_ap_start": dict(module="candidate3_ap", cls="Candidate3Env",
-                                 model="ppo_candidate3_ap_start", vecnorm="vecnormalize_candidate3_ap_start.pkl",
-                                 log_dir="./training_logs_candidate3_ap_start/"),
+    "candidate3_ap_comy1": dict(module="candidate3_ap", cls="Candidate3Env",
+                                model="ppo_candidate3_ap_comy1", vecnorm="vecnormalize_candidate3_ap_comy1.pkl",
+                                log_dir="./training_logs_candidate3_ap_comy1/"),
 }
 
 
@@ -59,11 +56,24 @@ def _save(fig, path_no_ext):
         print(f" (PNG export failed [{type(e).__name__}], wrote {path_no_ext}.html instead)")
 
 
-def collect_episodes(cfg, EnvClass, n_episodes=20):
+def tag(key, suffix):
+    """
+    Build a plot title tag without double-appending a suffix that's
+    already part of the candidate's own name. E.g. key="candidate2_ap_perturbed"
+    with suffix="perturbed" stays "candidate2_ap_perturbed", not
+    "candidate2_ap_perturbed_perturbed". Only guards exact suffix match,
+    so "clean" still always gets appended normally.
+    """
+    if key.endswith(f"_{suffix}"):
+        return key
+    return f"{key}_{suffix}"
+
+
+def collect_episodes(cfg, EnvClass, n_episodes=20, disturb_prob=0.0, force_range=(0, 0)):
     model = PPO.load(cfg["model"])
     rows = []
     for ep in range(1, n_episodes + 1):
-        venv = DummyVecEnv([lambda: TimeLimit(EnvClass(), max_episode_steps=1000)])
+        venv = DummyVecEnv([lambda: TimeLimit(EnvClass(disturb_prob=disturb_prob, force_range=force_range), max_episode_steps=1000)])
         venv = VecNormalize.load(cfg["vecnorm"], venv)
         venv.training = False
         venv.norm_reward = False
@@ -252,20 +262,34 @@ def com_xy_plot(df, outdir, title_tag):
 if __name__ == "__main__":
     key = sys.argv[1] if len(sys.argv) > 1 else "candidate1"
     do_meanstd = "--meanstd" in sys.argv
+    do_perturb = "--perturb" in sys.argv
+
     cfg = CONFIGS[key]
     module = __import__(cfg["module"])
     EnvClass = getattr(module, cfg["cls"])
 
-    df, summary = collect_episodes(cfg, EnvClass)
     probe = EnvClass()
     bhl = probe.base_half_length
     gears = probe.model.actuator_gear[:, 0].copy()
 
-    out_dir = os.path.join(cfg["log_dir"], "plots")
-    make_plots(out_dir, df, summary, bhl, gears, key, cfg["log_dir"])
-    com_xy_plot(df, out_dir, key)
+    # --- clean rollout (always runs) ---
+    df_clean, summary_clean = collect_episodes(cfg, EnvClass)
+    out_dir_clean = os.path.join(cfg["log_dir"], "plots")
+    make_plots(out_dir_clean, df_clean, summary_clean, bhl, gears, tag(key, "clean"), cfg["log_dir"])
+    com_xy_plot(df_clean, out_dir_clean, tag(key, "clean"))
+    print(f"\nClean plots saved to {out_dir_clean}/")
+
+    # --- perturbed rollout (only if --perturb passed) ---
+    if do_perturb:
+        df_perturb, summary_pert = collect_episodes(
+            cfg, EnvClass, disturb_prob=0.1, force_range=(-30, 30)
+        )
+        out_dir_perturb = os.path.join(cfg["log_dir"], "plots_perturbed")
+        make_plots(out_dir_perturb, df_perturb, summary_pert, bhl, gears, tag(key, "perturbed"), cfg["log_dir"])
+        com_xy_plot(df_perturb, out_dir_perturb, tag(key, "perturbed"))
+        print(f"Perturbed plots saved to {out_dir_perturb}/")
 
     if do_meanstd:
-        meanstd_plot(cfg, EnvClass, out_dir, key)
+        meanstd_plot(cfg, EnvClass, out_dir_clean, key)
 
-    print(f"\nPlots saved to {out_dir}/")
+    print(f"\nDone.")

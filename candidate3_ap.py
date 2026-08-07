@@ -74,7 +74,7 @@ class Candidate3Env(AnkleHipEnv):
     def __init__(self, target_x_low=TARGET_X_LOW, target_x_high=TARGET_X_HIGH, fixed_target=None, omega=OMEGA,
                  shaping_weight=SHAPING_WEIGHT, nd_cap=ND_CAP, use_shaping=USE_SHAPING,
                  eps_pos=EPS_POS, eps_vel=EPS_VEL, safety_weight=SAFETY_WEIGHT,
-                 disturb_prob=0.0, force_range=(-20, 20), **kwargs):
+                 disturb_prob=0.1, force_range=(-30, 30), **kwargs):
         super().__init__(xml_file=XML_PATH, **kwargs)
         self.action_space = spaces.Box(-1.0, 1.0, (N_JOINTS,), np.float32)
         self.observation_space = spaces.Box(-np.inf, np.inf, (2 * N_JOINTS + 3,), np.float64)
@@ -226,7 +226,7 @@ class Candidate3Env(AnkleHipEnv):
 
 
 if __name__ == "__main__":
-    log_dir = "./training_logs_candidate3_ap_start/"
+    log_dir = "./training_logs_candidate3_ap_perturbed/"
     os.makedirs(log_dir, exist_ok=True)
 
     def make_env(rank):
@@ -244,6 +244,6 @@ if __name__ == "__main__":
     model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
                 learning_rate=3e-4, gamma=0.99, verbose=1)
     model.learn(total_timesteps=3_000_000)
-    model.save("ppo_candidate3_ap_start")
-    env.save("vecnormalize_candidate3_ap_start.pkl")
+    model.save("ppo_candidate3_ap_perturbed")
+    env.save("vecnormalize_candidate3_ap_perturbed.pkl")
     env.close()
