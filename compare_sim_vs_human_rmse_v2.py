@@ -18,9 +18,13 @@ import plotly.graph_objects as go
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from scipy.spatial.distance import euclidean
+from fastdtw import fastdtw
 
 
-HUMAN_CSV_PATH = "C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\RL\\human_com_cleaned_subject003_v2.csv"
+
+
+HUMAN_CSV_PATH = "C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_subject003_new.csv"
 HUMAN_COMX_COL = "com_x_aligned"
 HUMAN_TRIAL_COL = "trial_id"
 RESAMPLE_LEN = 60
@@ -32,7 +36,7 @@ CONFIGS = {
                              log_dir="./training_logs_candidate1_F_ap/"),
     "candidate1_ap_comy1": dict(module="candidate1_ap", cls="Candidate1Env",
                                      model="ppo_candidate1_ap_comy1", vecnorm="vecnormalize_candidate1_ap_comy1.pkl",
-                                     log_dir="./training_logs_candidate1_ap_comy1/"),                          
+                                     log_dir="./training_logs_candidate1_ap_comy1/"),
     "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
                            model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
                            log_dir="./training_logs_candidate2_ap/"),
@@ -55,6 +59,11 @@ def resample_to_fixed_length(traj, length=RESAMPLE_LEN):
     return np.interp(new_x, old_x, traj)
 
 
+def zero_reference(traj):
+    traj = np.asarray(traj, dtype=float)
+    return traj - traj[0]
+
+
 def load_human_trials():
     df = pd.read_csv(HUMAN_CSV_PATH, low_memory=False)
     trials = []
@@ -63,14 +72,22 @@ def load_human_trials():
         if len(vals) < 5:
             continue
         net_direction = np.sign(vals[-1] - vals[0])
+        vals_zeroed = zero_reference(vals)
         trials.append({
             "trial_id": trial_id,
-            "traj": resample_to_fixed_length(vals),
+            "traj": resample_to_fixed_length(vals_zeroed),
             "direction": net_direction,
             "start": vals[0],
             "end": vals[-1],
         })
     return trials
+
+
+def dtw_distance(a, b):
+    a = np.asarray(a, dtype=float).reshape(-1, 1)
+    b = np.asarray(b, dtype=float).reshape(-1, 1)
+    dist, _ = fastdtw(a, b, dist=euclidean)
+    return dist / len(a)
 
 
 def collect_sim_trajectories(cfg_key, n_episodes=N_SIM_EPISODES):
@@ -101,9 +118,15 @@ def collect_sim_trajectories(cfg_key, n_episodes=N_SIM_EPISODES):
         venv.close()
 
         net_direction = np.sign(target_x)
+        com_x_traj_zeroed = zero_reference(com_x_traj)
+        # Flip to canonical direction, so plot filtering by
+        # "direction" pulled the wrong 20/40 sim episodes.
+        if net_direction > 0:
+            com_x_traj_zeroed = -com_x_traj_zeroed
+            net_direction = -net_direction
         sims.append({
             "episode": ep,
-            "traj": resample_to_fixed_length(com_x_traj),
+            "traj": resample_to_fixed_length(com_x_traj_zeroed),
             "direction": net_direction,
             "target_x": target_x,
         })
@@ -117,13 +140,12 @@ def rmse(a, b):
 def compare_direction_matched(sims, trials):
     results = []
     for t in trials:
-        same_dir_sims = [s for s in sims if s["direction"] == t["direction"]]
-        if not same_dir_sims:
-            same_dir_sims = sims  # fallback if no same-direction sim exists
+        same_dir_sims = sims
 
+        dtw_dists = [dtw_distance(t["traj"], s["traj"]) for s in same_dir_sims]
         rmses = [rmse(t["traj"], s["traj"]) for s in same_dir_sims]
         corrs = [np.corrcoef(t["traj"], s["traj"])[0, 1] for s in same_dir_sims]
-        best_idx = int(np.argmin(rmses))
+        best_idx = int(np.argmin(dtw_dists))
 
         results.append({
             "trial_id": t["trial_id"],
@@ -132,8 +154,10 @@ def compare_direction_matched(sims, trials):
             "best_sim_episode": same_dir_sims[best_idx]["episode"],
             "best_rmse": rmses[best_idx],
             "best_corr": corrs[best_idx],
+            "best_dtw": dtw_dists[best_idx],
             "mean_rmse_same_dir": float(np.mean(rmses)),
             "mean_corr_same_dir": float(np.mean(corrs)),
+            "mean_dtw_same_dir": float(np.mean(dtw_dists)),
         })
     return pd.DataFrame(results)
 
@@ -159,15 +183,15 @@ def plot_mean_comparison(sims, trials, cfg_key):
         fig.add_trace(go.Scatter(x=np.concatenate([x, x[::-1]]),
                                   y=np.concatenate([human_mean + human_std, (human_mean - human_std)[::-1]]),
                                   fill="toself", fillcolor="firebrick", opacity=0.15, line=dict(width=0), showlegend=False))
-        fig.update_layout(title=f"Sim vs. human mean CoM-x, {label} trials ({cfg_key})",
-                           xaxis_title="normalized time", yaxis_title="CoM-x (m)")
-        fig.write_html(f"rmse_comparison_v2_{cfg_key}_{label}.html")
-        print(f"Saved plot to rmse_comparison_v2_{cfg_key}_{label}.html "
+        fig.update_layout(title=f"Sim vs. human mean CoM-x (zero-referenced), {label} trials ({cfg_key})",
+                           xaxis_title="normalized time", yaxis_title="CoM-x displacement from trial start (m)")
+        fig.write_html(f"rmse_comparison_v3_{cfg_key}_{label}.html")
+        print(f"Saved plot to rmse_comparison_v3_{cfg_key}_{label}.html "
               f"(n_sim={len(sim_subset)}, n_human={len(human_subset)})")
 
 
 if __name__ == "__main__":
-    cfg_key = sys.argv[1] if len(sys.argv) > 1 else "candidate1_F_ap"
+    cfg_key = sys.argv[1] if len(sys.argv) > 1 else "candidate1_ap"
 
     trials = load_human_trials()
     sims = collect_sim_trajectories(cfg_key)
@@ -182,17 +206,16 @@ if __name__ == "__main__":
 
     results = compare_direction_matched(sims, trials)
 
-    print("=== SUMMARY (direction-matched) ===")
+    # Verification: this MUST print [40]
+    print("n_same_dir_sims per trial (should be [40]):", results["n_same_dir_sims"].unique())
+
+    print("\n=== SUMMARY (canonicalized, zero-referenced) ===")
     print(f"Mean best-match RMSE: {results['best_rmse'].mean():.4f} m")
     print(f"Mean best-match correlation: {results['best_corr'].mean():.4f}")
-    print(f"Mean same-direction correlation: {results['mean_corr_same_dir'].mean():.4f}")
-    print()
-    print("--- By direction ---")
-    for d, label in [(1.0, "rightward"), (-1.0, "leftward")]:
-        subset = results[results["direction"] == d]
-        if len(subset) > 0:
-            print(f"{label}: n={len(subset)}, mean_best_corr={subset['best_corr'].mean():.4f}, "
-                  f"mean_best_rmse={subset['best_rmse'].mean():.4f}")
+    print(f"Mean best-match DTW distance: {results['best_dtw'].mean():.4f}")
+    print(f"Mean correlation (all sims): {results['mean_corr_same_dir'].mean():.4f}")
+    print(f"Mean DTW distance (all sims): {results['mean_dtw_same_dir'].mean():.4f}")
 
-    results.to_csv(f"rmse_results_v2_{cfg_key}.csv", index=False)
+    results.to_csv(f"rmse_results_v3_{cfg_key}.csv", index=False)
     plot_mean_comparison(sims, trials, cfg_key)
+ 
