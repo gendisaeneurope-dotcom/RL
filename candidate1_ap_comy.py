@@ -29,24 +29,29 @@ TARGET_SPAN = 0.5
 OMEGA = 0.2
 SHAPING_WEIGHT = 20.0
 ND_CAP = 1.0
-SUCCESS_BONUS = 2.0
+
+SUCCESS_BONUS = 6.0  # raised from 2.0 -- confirmed effective on Candidate 2
 FAIL_BASE = -100.0
 FAIL_SLOPE = -150.0
+TRACKING_DELAY_STEPS = 723  # 72.3% of episode, matching measured human commit timing
+
+STAY_PENALTY_WEIGHT = 0.5
+
 EPS_POS = 0.005
 EPS_VEL = 0.01
 USE_SHAPING = False
 
-# NEW: com_y stabilization weight.
 COM_Y_WEIGHT = 1.0
 
 
 class Candidate1Env(AnkleHipEnv):
-    """AP target-reaching, single-omega convex combination, no safety term, + com_y stabilization."""
+    """AP target-reaching, no safety term, + com_y stabilization
+    + active stay-near-start penalty (branch-order fixed)."""
 
     def __init__(self, target_x_low=TARGET_X_LOW, target_x_high=TARGET_X_HIGH,
                  fixed_target=None, omega=OMEGA, shaping_weight=SHAPING_WEIGHT,
                  nd_cap=ND_CAP, use_shaping=USE_SHAPING, eps_pos=EPS_POS, eps_vel=EPS_VEL,
-                 com_y_weight=COM_Y_WEIGHT,
+                 com_y_weight=COM_Y_WEIGHT, stay_penalty_weight=STAY_PENALTY_WEIGHT,
                  disturb_prob=0.1, force_range=(0, 30), **kwargs):
         super().__init__(xml_file=XML_PATH, **kwargs)
         self.action_space = spaces.Box(-1.0, 1.0, (N_JOINTS,), np.float32)
@@ -62,6 +67,7 @@ class Candidate1Env(AnkleHipEnv):
         self.eps_pos = float(eps_pos)
         self.eps_vel = float(eps_vel)
         self.com_y_weight = float(com_y_weight)
+        self.stay_penalty_weight = float(stay_penalty_weight)
         self.disturb_prob = disturb_prob
         self.force_range = force_range
 
@@ -70,6 +76,7 @@ class Candidate1Env(AnkleHipEnv):
         self.target_x = 0.0
         self.prev_norm_dist = 0.0
         self.prev_com_x = 0.0
+        self.trial_start_x = 0.0
 
         self.trunk_body_id = self.model.body("trunk").id
         self.root_body_id = self.model.body("trunk").id
@@ -110,7 +117,7 @@ class Candidate1Env(AnkleHipEnv):
 
         target_start_x = float(self.np_random.uniform(self.target_x_low, self.target_x_high))
         for _ in range(150):
-            com_x, _ = self._com_xy()
+            com_x, com_y = self._com_xy()
             error = target_start_x - com_x
             if abs(error) < 0.005:
                 break
@@ -119,6 +126,11 @@ class Candidate1Env(AnkleHipEnv):
             self.data.qpos[3] = np.clip(self.data.qpos[3] + 0.04 * error,
                                         self.fail_low[3] * 0.75, self.fail_high[3] * 0.75)
             mujoco.mj_forward(self.model, self.data)
+
+        # Record the trial's actual starting position ONCE, after the
+        # positioning loop converges -- used by the stay-penalty below.
+        com_x, com_y = self._com_xy()
+        self.trial_start_x = com_x
 
         self.target_x = (float(self.fixed_target) if self.fixed_target is not None
                           else float(self.np_random.uniform(self.target_x_low, self.target_x_high)))
@@ -158,8 +170,15 @@ class Candidate1Env(AnkleHipEnv):
         ef_u = float(np.mean(np.square(action)))
         energy = -self.omega * ef_u
 
+        # tracking: delay-window check BEFORE success check (branch-order
+        # fix ported from Candidate 2) -- no success bonus is reachable
+        # while _current_step < TRACKING_DELAY_STEPS.
+        stay_penalty = 0.0
         if failed:
             tracking = FAIL_BASE + FAIL_SLOPE * (1.0 - h)
+        elif self._current_step < TRACKING_DELAY_STEPS:
+            stay_penalty = abs(com_x - self.trial_start_x) / TARGET_SPAN
+            tracking = -self.stay_penalty_weight * stay_penalty
         elif success:
             tracking = SUCCESS_BONUS
         else:
@@ -167,24 +186,24 @@ class Candidate1Env(AnkleHipEnv):
 
         shaping = (self.shaping_weight * shaping_bonus) if (self.use_shaping and not failed and not success) else 0.0
 
-        # NEW: com_y stabilization. Candidate 1 has no safety term, so this is now the
-        # only force constraining the mediolateral axis.
+        # No safety term -- Candidate 1 is the no-safety baseline.
+        safety = 0.0
+
         com_y_penalty = self.com_y_weight * (com_y / self.base_half_length) ** 2
 
-        safety = 0.0
         reward = energy + tracking + safety - com_y_penalty + shaping
         terminated = bool(failed)
 
         info = {"com_x": com_x, "com_y": com_y, "target_x": self.target_x, "h": h,
                 "xcom_x": xcom_x, "com_x_dot": com_x_dot, "failed": failed, "success": success,
-                "com_y_penalty": com_y_penalty}
+                "com_y_penalty": com_y_penalty, "stay_penalty": stay_penalty}
         if self.render_mode == "human":
             self.render()
         return obs, reward, terminated, False, info
 
 
 if __name__ == "__main__":
-    log_dir = "./training_logs_candidate1_ap_comy1/"
+    log_dir = "./training_logs_candidate1_ap_comy1_staypenalty6/"
     os.makedirs(log_dir, exist_ok=True)
 
     def make_env(rank):
@@ -195,12 +214,13 @@ if __name__ == "__main__":
             return e
         return _f
 
+
     N_ENVS = 8
     env = SubprocVecEnv([make_env(i) for i in range(N_ENVS)])
     env = VecNormalize(env, norm_obs=False, norm_reward=True)
     model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
                 learning_rate=3e-4, gamma=0.99, verbose=1)
     model.learn(total_timesteps=3_000_000)
-    model.save("ppo_candidate1_ap_comy1")
-    env.save("vecnormalize_candidate1_ap_comy1.pkl")
+    model.save("ppo_candidate1_ap_comy1_staypenalty6")
+    env.save("vecnormalize_candidate1_ap_comy1_staypenalty6.pkl")
     env.close()

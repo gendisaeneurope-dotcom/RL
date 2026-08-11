@@ -6,10 +6,12 @@ correlation. This is the fix for the near-zero mean correlation seen in
 v1, which was an artifact of averaging mismatched directions together.
 
 Usage:
-    python compare_sim_vs_human_rmse_v2.py candidate1_ap
-    python compare_sim_vs_human_rmse_v2.py candidate2_ap
-    python compare_sim_vs_human_rmse_v2.py candidate3_ap
+    python compare_sim_vs_human_rmse_v2.py candidate1_ap_comy1
+    python compare_sim_vs_human_rmse_v2.py candidate2_ap_comy1
+    python compare_sim_vs_human_rmse_v2.py candidate2_ap_comy1_delayed
+    python compare_sim_vs_human_rmse_v2.py candidate3_ap_comy1
 """
+
 import sys
 import numpy as np
 import pandas as pd
@@ -22,33 +24,39 @@ from scipy.spatial.distance import euclidean
 from fastdtw import fastdtw
 
 
-
-
-HUMAN_CSV_PATH = "C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_subject003_new.csv"
-HUMAN_COMX_COL = "com_x_aligned"
+HUMAN_CSV_PATH = HUMAN_CSV_PATH = "C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_subject003_v7.csv"
+HUMAN_COMX_COL = "com_x_human"
 HUMAN_TRIAL_COL = "trial_id"
 RESAMPLE_LEN = 60
 N_SIM_EPISODES = 40  # increased from 20 to get better left/right coverage
 
 CONFIGS = {
-    "candidate1_ap": dict(module="candidate1_ap", cls="Candidate1Env",
-                             model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
-                             log_dir="./training_logs_candidate1_F_ap/"),
     "candidate1_ap_comy1": dict(module="candidate1_ap", cls="Candidate1Env",
-                                     model="ppo_candidate1_ap_comy1", vecnorm="vecnormalize_candidate1_ap_comy1.pkl",
-                                     log_dir="./training_logs_candidate1_ap_comy1/"),
-    "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
-                           model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
-                           log_dir="./training_logs_candidate2_ap/"),
+                                     model="ppo_candidate1_ap_comy1", vecnorm="vecnormalize_candidate1_ap_comy1.pkl"),
+
+    "candidate1_ap_comy1_staypenalty6": dict(module="candidate1_ap_comy", cls="Candidate1Env",
+                                         model="ppo_candidate1_ap_comy1_staypenalty6", vecnorm="vecnormalize_candidate1_ap_comy1_staypenalty6.pkl"),
+
     "candidate2_ap_comy1": dict(module="candidate2_ap", cls="Candidate2Env",
-                               model="ppo_candidate2_ap_comy1", vecnorm="vecnormalize_candidate2_ap_comy1.pkl",
-                               log_dir="./training_logs_candidate2_ap_comy1/"),
-    "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
-                           model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
-                           log_dir="./training_logs_candidate3_ap/"),
+                               model="ppo_candidate2_ap_comy1", vecnorm="vecnormalize_candidate2_ap_comy1.pkl"),
+
+    "candidate2_ap_comy1_delayed": dict(module="candidate2_ap_comy", cls="Candidate2Env",
+                       model="ppo_candidate2_ap_comy1_delayed", vecnorm="vecnormalize_candidate2_ap_comy1_delayed.pkl"),
+
+    "candidate2_ap_comy1_staypenalty": dict(module="candidate2_ap_comy1_staypenalty", cls="Candidate2Env",
+                           model="ppo_candidate2_ap_comy1_staypenalty", vecnorm="vecnormalize_candidate2_ap_comy1_staypenalty.pkl"),
+
+    "candidate2_ap_comy1_staypenalty_jointfix": dict(module="candidate2_ap_comy1_staypenalty_jointfix", cls="Candidate2Env",
+                               model="ppo_candidate2_ap_comy1_staypenalty_jointfix", vecnorm="vecnormalize_candidate2_ap_comy1_staypenalty_jointfix.pkl"),
+
+    "candidate2_ap_comy1_staypenalty_6": dict(module="candidate2_ap_comy1_staypenalty", cls="Candidate2Env",
+                           model="ppo_candidate2_ap_comy1_staypenalty_6", vecnorm="vecnormalize_candidate2_ap_comy1_staypenalty_6.pkl"),
+
     "candidate3_ap_comy1": dict(module="candidate3_ap", cls="Candidate3Env",
-                                model="ppo_candidate3_ap_comy1", vecnorm="vecnormalize_candidate3_ap_comy1.pkl",
-                                log_dir="./training_logs_candidate3_ap_comy1/"),
+                                model="ppo_candidate3_ap_comy1", vecnorm="vecnormalize_candidate3_ap_comy1.pkl"),
+
+    "candidate3_ap_comy1_staypenalty6": dict(module="candidate3_ap_comy1_staypenalty", cls="Candidate3Env",
+                           model="ppo_candidate3_ap_comy1_staypenalty6", vecnorm="vecnormalize_candidate3_ap_comy1_staypenalty6.pkl")
 }
 
 
@@ -71,8 +79,11 @@ def load_human_trials():
         vals = g[HUMAN_COMX_COL].to_numpy()
         if len(vals) < 5:
             continue
-        net_direction = np.sign(vals[-1] - vals[0])
         vals_zeroed = zero_reference(vals)
+        net_direction = np.sign(vals_zeroed[-1] - vals_zeroed[0])
+        if net_direction > 0:
+            vals_zeroed = -vals_zeroed
+            net_direction = -net_direction
         trials.append({
             "trial_id": trial_id,
             "traj": resample_to_fixed_length(vals_zeroed),
@@ -116,14 +127,14 @@ def collect_sim_trajectories(cfg_key, n_episodes=N_SIM_EPISODES):
             if target_x is None:
                 target_x = float(info[0]["target_x"])
         venv.close()
+        print(f"episode {ep}: {len(com_x_traj)} steps")
 
-        net_direction = np.sign(target_x)
         com_x_traj_zeroed = zero_reference(com_x_traj)
-        # Flip to canonical direction, so plot filtering by
-        # "direction" pulled the wrong 20/40 sim episodes.
+        net_direction = np.sign(com_x_traj_zeroed[-1] - com_x_traj_zeroed[0])
         if net_direction > 0:
             com_x_traj_zeroed = -com_x_traj_zeroed
             net_direction = -net_direction
+
         sims.append({
             "episode": ep,
             "traj": resample_to_fixed_length(com_x_traj_zeroed),
@@ -206,7 +217,6 @@ if __name__ == "__main__":
 
     results = compare_direction_matched(sims, trials)
 
-    # Verification: this MUST print [40]
     print("n_same_dir_sims per trial (should be [40]):", results["n_same_dir_sims"].unique())
 
     print("\n=== SUMMARY (canonicalized, zero-referenced) ===")
@@ -218,4 +228,25 @@ if __name__ == "__main__":
 
     results.to_csv(f"rmse_results_v3_{cfg_key}.csv", index=False)
     plot_mean_comparison(sims, trials, cfg_key)
- 
+
+    # --- debug: per-sim-episode correlation against the human mean trace ---
+    human_mean_traj = np.mean([t["traj"] for t in trials], axis=0)
+    per_sim_corr = []
+    for s in sims:
+        c = np.corrcoef(s["traj"], human_mean_traj)[0, 1]
+        per_sim_corr.append((s["episode"], s.get("target_x", "?"), c))
+
+    per_sim_corr.sort(key=lambda x: x[2])
+    print("\\nWorst 5 (least correlated with human mean):")
+    for ep, tgt, c in per_sim_corr[:5]:
+        print(f"  ep {ep}, target={tgt}, corr={c:.3f}")
+    print("Best 5 (most correlated with human mean):")
+    for ep, tgt, c in per_sim_corr[-5:]:     
+            print(f"  ep {ep}, target={tgt}, corr={c:.3f}")
+
+    lengths = [1000,117,1000,111,1000,154,1000,101,1000,143,1000,90,1000,99,1000,129,1000,91,1000,133,
+           1000,74,1000,102,1000,133,1000,147,1000,150,1000,118,1000,131,1000,97,1000,140,1000,74]
+    even_idx = lengths[0::2]  # ep 0,2,4... -> target=0.08
+    odd_idx = lengths[1::2]   # ep 1,3,5... -> target=-0.08
+    print("target=+0.08 episodes (even index):", even_idx)
+    print("target=-0.08 episodes (odd index):", odd_idx)

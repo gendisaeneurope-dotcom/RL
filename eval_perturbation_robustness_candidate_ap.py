@@ -22,51 +22,16 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 
 CONFIGS = {
-    "candidate1_F_ap": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                             model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
-                             log_dir="./training_logs_candidate1_F_ap/"),
-
-    "candidate1_ap_perturbed": dict(module="candidate1_F_ap", cls="Candidate1Env",
-                                 model="ppo_candidate1_ap_perturbed", vecnorm="vecnormalize_candidate1_ap_perturbed.pkl",
-                                 log_dir="./training_logs_candidate1_ap_perturbed/"),
-
-    "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
-                           model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
-                           log_dir="./training_logs_candidate2_ap/"),
-    "candidate2_ap_w01": dict(module="candidate2_ap", cls="Candidate2Env",
-                               model="ppo_candidate2_ap_w01", vecnorm="vecnormalize_candidate2_ap_w01.pkl",
-                               log_dir="./training_logs_candidate2_ap_w01/"),
-    "candidate2_ap_w015": dict(module="candidate2_ap", cls="Candidate2Env",
-                                   model="ppo_candidate2_ap_w015", vecnorm="vecnormalize_candidate2_ap_w015.pkl",
-                                   log_dir="./training_logs_candidate2_ap_w015/"),
-    "candidate2_ap_w02": dict(module="candidate2_ap", cls="Candidate2Env",
-                                   model="ppo_candidate2_ap_w02", vecnorm="vecnormalize_candidate2_ap_w02.pkl",
-                                   log_dir="./training_logs_candidate2_ap_w02/"),
-    "candidate2_ap_w025": dict(module="candidate2_ap", cls="Candidate2Env",
-                                   model="ppo_candidate2_ap_w025", vecnorm="vecnormalize_candidate2_ap_w025.pkl",
-                                   log_dir="./training_logs_candidate2_ap_w025/"),
-    "candidate2_ap_perturbed": dict(module="candidate2_ap", cls="Candidate2Env",
-                                 model="ppo_candidate2_ap_perturbed", vecnorm="vecnormalize_candidate2_ap_perturbed.pkl",
-                                 log_dir="./training_logs_candidate2_ap_perturbed/"),
-    "candidate2_ap_comy": dict(module="candidate2_ap", cls="Candidate2Env",
-                                     model="ppo_candidate2_ap_comy", vecnorm="vecnormalize_candidate2_ap_comy.pkl",
-                                     log_dir="./training_logs_candidate2_ap_comy/"),
-    "candidate2_ap_comy": dict(module="candidate2_ap", cls="Candidate2Env",
-                                     model="ppo_candidate2_ap_comy", vecnorm="vecnormalize_candidate2_ap_comy.pkl",
-                                     log_dir="./training_logs_candidate2_ap_comy/"),
-
-    "candidate2_ap_sw005_01disturb": dict(module="candidate2_ap_disturb", cls="Candidate2Env",
-                                            model="ppo_candidate2_ap_sw005_01disturb", vecnorm="vecnormalize_candidate2_ap_sw005_01disturb.pkl",
-                                            log_dir="./training_logs_candidate2_ap_sw005_01disturb/"),
-
-    "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
-                           model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
-                           log_dir="./training_logs_candidate3_ap/"),
-
-    "candidate3_ap_perturbed": dict(module="candidate3_ap", cls="Candidate3Env",
-                                 model="ppo_candidate3_ap_perturbed", vecnorm="vecnormalize_candidate3_ap_perturbed.pkl",
-                                 log_dir="./training_logs_candidate3_ap_perturbed/"),
-}
+        "candidate1": dict(module="candidate1_ap_comy", cls="Candidate1Env",
+                                        model="ppo_candidate1_ap_comy1_staypenalty6",
+                                        vecnorm="vecnormalize_candidate1_ap_comy1_staypenalty6.pkl"),
+        "candidate2": dict(module="candidate2_ap_comy1_staypenalty_jointfix", cls="Candidate2Env",
+                                        model="ppo_candidate2_ap_comy1_staypenalty_jointfix",
+                                        vecnorm="vecnormalize_candidate2_ap_comy1_staypenalty_jointfix.pkl"),
+        "candidate3": dict(module="candidate3_ap_comy1_staypenalty", cls="Candidate3Env",
+                                        model="ppo_candidate3_ap_comy1_staypenalty6",
+                                        vecnorm="vecnormalize_candidate3_ap_comy1_staypenalty6.pkl"),
+    }
 
 # Same escalating conditions as the original script -- used for the reward/error
 # severity sweep only. NOT used for the single-condition trajectory plot below.

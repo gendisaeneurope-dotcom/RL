@@ -17,25 +17,16 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 JOINT_NAMES = ["ankle_eversion", "ankle_flexion", "hip_abduction", "hip_flexion"]
 
 CONFIGS = {
-    "candidate1_ap": dict(module="candidate1_ap", cls="Candidate1Env",
-                             model="ppo_candidate1_F_ap", vecnorm="vecnormalize_candidate1_F_ap.pkl",
-                             log_dir="./training_logs_candidate1_F_ap/"),
-    "candidate1_ap_comy1": dict(module="candidate1_ap", cls="Candidate1Env",
-                                     model="ppo_candidate1_ap_comy1", vecnorm="vecnormalize_candidate1_ap_comy1.pkl",
-                                     log_dir="./training_logs_candidate1_ap_comy1/"),                          
-    "candidate2_ap": dict(module="candidate2_ap", cls="Candidate2Env",
-                           model="ppo_candidate2_ap", vecnorm="vecnormalize_candidate2_ap.pkl",
-                           log_dir="./training_logs_candidate2_ap/"),
-    "candidate2_ap_comy1": dict(module="candidate2_ap", cls="Candidate2Env",
-                               model="ppo_candidate2_ap_comy1", vecnorm="vecnormalize_candidate2_ap_comy1.pkl",
-                               log_dir="./training_logs_candidate2_ap_comy1/"),
-    "candidate3_ap": dict(module="candidate3_ap", cls="Candidate3Env",
-                           model="ppo_candidate3_ap", vecnorm="vecnormalize_candidate3_ap.pkl",
-                           log_dir="./training_logs_candidate3_ap/"),
-    "candidate3_ap_comy1": dict(module="candidate3_ap", cls="Candidate3Env",
-                                model="ppo_candidate3_ap_comy1", vecnorm="vecnormalize_candidate3_ap_comy1.pkl",
-                                log_dir="./training_logs_candidate3_ap_comy1/"),
-}
+        "candidate1": dict(module="candidate1_ap_comy", cls="Candidate1Env",
+                                        model="ppo_candidate1_ap_comy1_staypenalty6",
+                                        vecnorm="vecnormalize_candidate1_ap_comy1_staypenalty6.pkl"),
+        "candidate2": dict(module="candidate2_ap_comy1_staypenalty_jointfix", cls="Candidate2Env",
+                                        model="ppo_candidate2_ap_comy1_staypenalty_jointfix",
+                                        vecnorm="vecnormalize_candidate2_ap_comy1_staypenalty_jointfix.pkl"),
+        "candidate3": dict(module="candidate3_ap_comy1_staypenalty", cls="Candidate3Env",
+                                        model="ppo_candidate3_ap_comy1_staypenalty6",
+                                        vecnorm="vecnormalize_candidate3_ap_comy1_staypenalty6.pkl"),
+    }
 
 
 def get_joint_limits(probe_env):
