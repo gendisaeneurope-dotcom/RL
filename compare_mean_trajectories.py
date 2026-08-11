@@ -14,8 +14,7 @@ trial comparisons. This script instead:
   2. Computes the MEAN trajectory (and SEM band) across ALL human trials,
      and separately the MEAN trajectory across ALL sim episodes.
   3. Computes ONE correlation and ONE DTW distance between the two MEAN
-     curves -- not hundreds of individual noisy pairs averaged together
-     afterward. Averaging trajectories BEFORE correlating removes most
+     curves. Averaging trajectories BEFORE correlating removes most
      of the trial-to-trial noise; averaging correlation VALUES afterward
      (what the old scripts did) does not.
   4. Produces the overlay ("spaghetti") plot explicitly requested: every
