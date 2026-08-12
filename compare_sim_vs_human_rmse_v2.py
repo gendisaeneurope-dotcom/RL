@@ -24,8 +24,9 @@ from scipy.spatial.distance import euclidean
 from fastdtw import fastdtw
 
 
-HUMAN_CSV_PATH = HUMAN_CSV_PATH = "C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_subject003_v7.csv"
+HUMAN_CSV_PATH = HUMAN_CSV_PATH = "C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_subject003_v8.csv"
 HUMAN_COMX_COL = "com_x_human"
+HUMAN_COMY_COL = "com_y_human"
 HUMAN_TRIAL_COL = "trial_id"
 RESAMPLE_LEN = 60
 N_SIM_EPISODES = 40  # increased from 20 to get better left/right coverage

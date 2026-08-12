@@ -2,8 +2,8 @@
 
 
 Usage:
-    python clean_and_prepare.py subject003
-    python clean_and_prepare.py subject004
+    python clean_prepare.py subject003
+    python clean_prepare.py subject004
 """
 import sys
 import pandas as pd
@@ -11,11 +11,12 @@ import numpy as np
 
 subject = sys.argv[1]
 RAW_PATH = f"C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\resynchronized_data_{subject}.csv"
-OUTPUT_PATH = f"C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_{subject}_v7.csv"
+OUTPUT_PATH = f"C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_{subject}_v8.csv"
 
 df = pd.read_csv(RAW_PATH, low_memory=False)
 
 df["com_x_human"] = -df["com.0"] / 1000.0
+df["com_y_human"] = df["com.1"] / 1000.0
 
 task_mask = df["current_state"].isin(
     ["GO_TO_LEFT_CIRCLE_AFTER_TRIAL", "GO_TO_RIGHT_CIRCLE_AFTER_TRIAL",

@@ -27,6 +27,8 @@ delay-window check BEFORE the success check, so no success bonus is
 reachable at all while `_current_step < TRACKING_DELAY_STEPS`, regardless
 of position/velocity. This was caught and fixed prior to any training run
 on this variant -- no wasted training cycle.
+
+python candidate2_ap_comy1_staypenalty.py
 """
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -72,6 +74,8 @@ TRACKING_DELAY_STEPS = 723  # 72.3% of episode, matching measured human commit t
 # joint-angle traces (not just com_x) that this produces plausible small
 # sway rather than a completely rigid/frozen policy.
 STAY_PENALTY_WEIGHT = 0.5
+
+A_SCALE = 1.0  # NEW: overall weight on the energy+safety block. Try 1.0, 2.0, 4.0
 
 EPS_POS = 0.005
 EPS_VEL = 0.01
@@ -248,7 +252,7 @@ class Candidate2Env(AnkleHipEnv):
 
         com_y_penalty = self.com_y_weight * (com_y / self.base_half_length) ** 2
 
-        reward = energy + tracking + safety - com_y_penalty + shaping
+        reward = tracking - com_y_penalty + shaping + A_SCALE * (energy + safety)
         terminated = bool(failed)
 
         info = {"com_x": com_x, "com_y": com_y, "target_x": self.target_x, "h": h,
@@ -262,7 +266,7 @@ class Candidate2Env(AnkleHipEnv):
 
 
 if __name__ == "__main__":
-    log_dir = "./training_logs_candidate2_ap_comy1_staypenalty_6/"
+    log_dir = "./training_logs_candidate2_ap_ascale1/"
     os.makedirs(log_dir, exist_ok=True)
 
     def make_env(rank):
@@ -280,6 +284,6 @@ if __name__ == "__main__":
     model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
                 learning_rate=3e-4, gamma=0.99, verbose=1)
     model.learn(total_timesteps=3_000_000)
-    model.save("ppo_candidate2_ap_comy1_staypenalty_6")
-    env.save("vecnormalize_candidate2_ap_comy1_staypenalty_6.pkl")
+    model.save("ppo_candidate2_ap_ascale1")
+    env.save("vecnormalize_candidate2_ap_ascale1.pkl")
     env.close()
