@@ -13,7 +13,7 @@
 
     <!-- Foot (fixed base, represents ankle pivot point) -->
     <body name="foot" pos="0 0 0.05">
-      <geom name="foot_geom" type="box" size="0.15 0.08 0.05" rgba="0.3 0.3 0.3 1"/>
+      <geom name="foot_geom" type="box" size="0.15 0.15 0.05" rgba="0.3 0.3 0.3 1"/>
 
       <!-- ANKLE COMPLEX: 2 rotational DOF at one anatomical joint -->
       <!-- Dummy massless body carries the eversion/inversion (frontal-plane, x-axis) rotation -->

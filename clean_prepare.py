@@ -4,6 +4,7 @@
 Usage:
     python clean_prepare.py subject003
     python clean_prepare.py subject004
+    python clean_prepare.py subject005
 """
 import sys
 import pandas as pd
@@ -11,12 +12,12 @@ import numpy as np
 
 subject = sys.argv[1]
 RAW_PATH = f"C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\resynchronized_data_{subject}.csv"
-OUTPUT_PATH = f"C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_{subject}_v8.csv"
+OUTPUT_PATH = f"C:\\Gepi10\\SPACEMED\\Sem4_Thesis\\Thesis\\Workspace\\Gymnasium_RL\\human_com_cleaned_{subject}_v9.csv"
 
 df = pd.read_csv(RAW_PATH, low_memory=False)
 
-df["com_x_human"] = -df["com.0"] / 1000.0
-df["com_y_human"] = df["com.1"] / 1000.0
+df["com_ml_human"] = -df["com.0"] / 1000.0   # was com_x_human — this is the TASK axis
+df["com_ap_human"] = df["com.1"] / 1000.0    # was com_y_human — this is the SAFETY axis
 
 task_mask = df["current_state"].isin(
     ["GO_TO_LEFT_CIRCLE_AFTER_TRIAL", "GO_TO_RIGHT_CIRCLE_AFTER_TRIAL",
@@ -54,10 +55,10 @@ if last_trial_remaining == 0:
 
 print(f"{subject}: {clean['trial_id'].nunique()} trials kept, {n_dropped} dropped as end-of-session padding.")
 print("\nSign check:")
-print("  RIGHT states mean:", clean[clean["current_state"].str.contains("RIGHT")]["com_x_human"].mean())
-print("  LEFT states mean:", clean[clean["current_state"].str.contains("LEFT")]["com_x_human"].mean())
-print("\ncom_x_human range:")
-print(clean["com_x_human"].describe())
+print("  RIGHT states mean:", clean[clean["current_state"].str.contains("RIGHT")]["com_ml_human"].mean())
+print("  LEFT states mean:", clean[clean["current_state"].str.contains("LEFT")]["com_ml_human"].mean())
+print("\ncom_ml_human range:")
+print(clean["com_ml_human"].describe())
 
 clean.to_csv(OUTPUT_PATH, index=False)
 print(f"\nSaved to {OUTPUT_PATH}")
