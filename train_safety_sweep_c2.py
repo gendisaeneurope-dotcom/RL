@@ -51,7 +51,7 @@ TRAIN_STEPS = 3_000_000
 # ---------------------------------------------------------------------
 RUN_MODE = "seeds"           # "seeds" or "sweep"
 
-SEED_CHECK_WEIGHT = 0.15     # weight to replicate in "seeds" mode
+SEED_CHECK_WEIGHT = 0.90     # weight to replicate in "seeds" mode
 SEEDS = [0, 1, 2]
 
 SAFETY_VALUES = [0.05, 0.10, 0.15, 0.25]   # used in "sweep" mode

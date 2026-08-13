@@ -1,5 +1,5 @@
 """
-Candidate 2 -- axis-swapped, no stay penalty.
+Candidate 2 -> axis-swapped, no stay penalty.
 
   tracking / target / success  -> com_y  (ML, task axis)
   safety + off-axis stability  -> com_x  (AP, perturbed axis)

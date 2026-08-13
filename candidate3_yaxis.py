@@ -1,5 +1,5 @@
 """
-Candidate 3 -- axis-swapped, capture-point safety.
+Candidate 3 -> axis-swapped, capture-point safety.
 
   tracking / target / success  -> com_y  (ML, task axis)
   safety (capture point)       -> com_x  (AP, perturbed axis)

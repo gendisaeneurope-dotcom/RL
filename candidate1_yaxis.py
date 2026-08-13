@@ -1,5 +1,5 @@
 """
-Candidate 1 -- axis-swapped, no safety term (baseline).
+Candidate 1 -> axis-swapped, no safety term (baseline).
 
   tracking / target / success  -> com_y  (ML, task axis)
   off-axis stability           -> com_x  (AP, perturbed axis)
@@ -236,7 +236,7 @@ class Candidate1Env(AnkleHipEnv):
 
 
 if __name__ == "__main__":
-    log_dir = "./training_logs_candidate1_yaxis/"
+    log_dir = "./training_logs_candidate1_yaxis_015/"
     os.makedirs(log_dir, exist_ok=True)
 
     def make_env(rank):
@@ -254,6 +254,6 @@ if __name__ == "__main__":
     model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
                 learning_rate=3e-4, gamma=0.99, verbose=1)
     model.learn(total_timesteps=3_000_000)
-    model.save("ppo_candidate1_yaxis")
-    env.save("vecnormalize_candidate1_yaxis.pkl")
+    model.save("ppo_candidate1_yaxis_015")
+    env.save("vecnormalize_candidate1_yaxis_015.pkl")
     env.close()

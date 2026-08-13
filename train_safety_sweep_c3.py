@@ -1,5 +1,5 @@
 """
-train_safety_sweep_c3.py  --  CANDIDATE 3 (capture-point safety)
+train_safety_sweep_c3.py  ->  CANDIDATE 3 (capture-point safety)
 ================================================================
 Axis-swapped: task on com_y (ML), safety on com_x (AP).
 
@@ -26,19 +26,19 @@ import numpy as np
 XML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ankle_hip_2x2dof.xml")
 _base = gym.make("InvertedPendulum-v5", xml_file=XML_PATH).unwrapped
 AnkleHipEnv = type(_base)
-
+ 
 N_JOINTS = 4
 EVERSION_J = 0
-
+ 
 JOINT_LOW = np.radians([-35.0, -50.0, -50.0, -30.0])
 JOINT_HIGH = np.radians([35.0, 50.0, 30.0, 120.0])
 FAIL_MARGIN = 0.95
-
+ 
 TARGET_SPAN = 0.5
 COM_Y_PER_RAD = -0.31058 / np.radians(15.0)
-TARGET_DISPLACEMENT = 0.08
+TARGET_DISPLACEMENT = 0.107   # was 0.08 -- must match the corrected 0.15m geometry
 START_NOISE = 0.005
-
+ 
 OMEGA = 0.2
 SHAPING_WEIGHT = 20.0
 ND_CAP = 1.0
@@ -49,20 +49,24 @@ A_SCALE = 1.0
 EPS_POS = 0.005
 EPS_VEL = 0.01
 USE_SHAPING = False
-
-TRAIN_STEPS = 1_000_000
-
+ 
+TRAIN_STEPS = 3_000_000   # the confirmed-stable check was run at 3M
+                          
+ 
 # ---------------------------------------------------------------------
 RUN_MODE = "seeds"           # "seeds" or "sweep"
-
-SEED_CHECK_WEIGHT = 0.50     # the value that worked in the single-run sweep
+ 
+SEED_CHECK_WEIGHT = 0.50     # single-run check showed 4/5 good, 1 miss on
+                              # the positive target (ep2, err 0.0272) --
+                              # this seed run determines if that's real or
+                              # this specific seed's variance
 SEEDS = [0, 1, 2]
-
+ 
 SAFETY_VALUES = [0.05, 0.15, 0.25, 0.50]   # used in "sweep" mode
 SWEEP_SEED = 0
 # ---------------------------------------------------------------------
-
-
+ 
+ 
 class Candidate3EnvY(AnkleHipEnv):
     """Axis-swapped Candidate 3, parameterised by safety_weight."""
 
