@@ -1,244 +1,179 @@
 """
 train_ascale_sweep.py
-=========================
-Trains Candidate 2 at three A_SCALE values (1.0, 2.0, 4.0), per
-supervisor suggestion: reward = tracking - com_y_penalty + shaping
-                                + A_SCALE * (energy + safety)
+======================
+FIXED after a WinError 1450 crash lost an 83%-complete 3M-step run with
+no checkpoint saved. Two changes:
 
-A_SCALE=1.0 is the untrained baseline already defined in your candidate2
-file (ppo_candidate2_ap_ascale1 was never actually run). This script
-trains all three in one pass so they're directly comparable (same code,
-same seeds, only A_SCALE differs).
+  1. ONE (candidate, a_value, seed) COMBINATION PER INVOCATION. The
+     previous version looped over all combinations inside one long-running
+     Python process, accumulating subprocess/handle pressure on Windows
+     across SubprocVecEnv open/close cycles until the OS refused to
+     allocate more (WinError 1450). Running one combination per process
+     guarantees full OS resource release between runs -- drive it
+     externally, see bottom of this docstring.
 
-Run this BEFORE the height-check experiment (Step 2) -- keep the two
-changes separate so effects can be attributed cleanly.
+  2. CHECKPOINTING. model.save() previously only happened after learn()
+     fully completed, so any crash mid-run lost 100% of that run's
+     progress. Now saves every CHECKPOINT_FREQ steps via SB3's
+     CheckpointCallback, so a crash loses at most CHECKPOINT_FREQ steps,
+     and a crashed run resumes automatically rather than restarting.
 
-Usage:
-    python train_ascale_sweep.py
+Usage (run ONE combination per invocation):
+    python train_ascale_sweep.py --candidate candidate2 --a_value 1.0 --seed 0
+    python train_ascale_sweep.py --candidate candidate2 --a_value 2.0 --seed 0
+
+Drive multiple combinations from PowerShell, NOT from inside this script:
+    foreach ($a in 1.0,2.0,4.0) {
+      foreach ($s in 0,1,2) {
+        python train_ascale_sweep.py --candidate candidate2 --a_value $a --seed $s
+      }
+    }
+Each iteration is a fresh process; Windows fully reclaims handles between
+runs this way.
+
+To re-evaluate an already-trained model without retraining:
+    python train_ascale_sweep.py --candidate candidate2 --a_value 1.0 --seed 0 --eval_only
 """
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-import mujoco
-import gymnasium as gym
+import argparse
+import importlib
+import numpy as np
 from gymnasium.wrappers import TimeLimit
-from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
-import numpy as np
+from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 
-XML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ankle_hip_2x2dof.xml")
-_base = gym.make("InvertedPendulum-v5", xml_file=XML_PATH).unwrapped
-AnkleHipEnv = type(_base)
+from candidate1_yaxis import Candidate1Env
+from candidate2_yaxis import Candidate2Env
+from candidate3_yaxis import Candidate3Env
 
-N_JOINTS = 4
-JOINT_LOW = np.radians([-35.0, -50.0, -50.0, -30.0])
-JOINT_HIGH = np.radians([35.0, 50.0, 30.0, 120.0])
-FAIL_MARGIN = 0.95
-TARGET_X_LOW, TARGET_X_HIGH = -0.1, 0.1
-TARGET_SPAN = 0.5
-OMEGA = 0.2
-SHAPING_WEIGHT = 20.0
-ND_CAP = 1.0
-SUCCESS_BONUS = 6.0
-FAIL_BASE = -100.0
-FAIL_SLOPE = -150.0
-TRACKING_DELAY_STEPS = 723
-STAY_PENALTY_WEIGHT = 0.5
+TRAIN_STEPS = 3_000_000
+CHECKPOINT_FREQ = 250_000   # save every 250k steps -- max loss on crash
 EPS_POS = 0.005
-EPS_VEL = 0.01
-USE_SHAPING = False
-SAFETY_WEIGHT = 0.25
-COM_Y_WEIGHT = 1.0
 
-ASCALE_VALUES = [1.0, 2.0, 4.0]
-
-
-class Candidate2EnvAScale(AnkleHipEnv):
-    """Identical to your confirmed Candidate2Env, parameterized by a_scale."""
-
-    def __init__(self, a_scale=1.0, target_x_low=TARGET_X_LOW, target_x_high=TARGET_X_HIGH,
-                 fixed_target=None, omega=OMEGA, shaping_weight=SHAPING_WEIGHT, nd_cap=ND_CAP,
-                 use_shaping=USE_SHAPING, eps_pos=EPS_POS, eps_vel=EPS_VEL,
-                 safety_weight=SAFETY_WEIGHT, com_y_weight=COM_Y_WEIGHT,
-                 stay_penalty_weight=STAY_PENALTY_WEIGHT, disturb_prob=0.1,
-                 force_range=(0, 30), **kwargs):
-        super().__init__(xml_file=XML_PATH, **kwargs)
-        self.action_space = spaces.Box(-1.0, 1.0, (N_JOINTS,), np.float32)
-        self.observation_space = spaces.Box(-np.inf, np.inf, (2 * N_JOINTS + 3,), np.float64)
-
-        self.a_scale = float(a_scale)
-        self.target_x_low = float(target_x_low)
-        self.target_x_high = float(target_x_high)
-        self.fixed_target = fixed_target
-        self.omega = float(omega)
-        self.shaping_weight = float(shaping_weight)
-        self.nd_cap = float(nd_cap)
-        self.use_shaping = bool(use_shaping)
-        self.eps_pos = float(eps_pos)
-        self.eps_vel = float(eps_vel)
-        self.safety_weight = float(safety_weight)
-        self.com_y_weight = float(com_y_weight)
-        self.stay_penalty_weight = float(stay_penalty_weight)
-        self.disturb_prob = disturb_prob
-        self.force_range = force_range
-
-        self._current_step = 0
-        self.target_x = 0.0
-        self.prev_norm_dist = 0.0
-        self.prev_com_x = 0.0
-        self.trial_start_x = 0.0
-        self.safety_grace_steps = 30
-
-        self.trunk_body_id = self.model.body("trunk").id
-        self.root_body_id = self.model.body("trunk").id
-        self.step_dt = self.model.opt.timestep * self.frame_skip
-
-        d0 = mujoco.MjData(self.model)
-        mujoco.mj_forward(self.model, d0)
-        self.com_height = float(d0.subtree_com[self.root_body_id][2])
-        self.omega0 = float(np.sqrt(9.81 / self.com_height))
-        self.base_half_length = float(self.model.geom("foot_geom").size[0])
-
-        self.fail_low = JOINT_LOW * FAIL_MARGIN
-        self.fail_high = JOINT_HIGH * FAIL_MARGIN
-
-    def _com_xy(self):
-        com_pos = self.data.subtree_com[self.root_body_id]
-        return float(com_pos[0]), float(com_pos[1])
-
-    def _get_obs(self):
-        q = self.data.qpos[:N_JOINTS].copy()
-        qd = self.data.qvel[:N_JOINTS].copy()
-        com_x, com_y = self._com_xy()
-        return np.concatenate([
-            q, qd, [com_x / TARGET_SPAN], [self.target_x / TARGET_SPAN],
-            [(com_x - self.target_x) / TARGET_SPAN],
-        ]).astype(np.float64)
-
-    def reset(self, **kwargs):
-        self._current_step = 0
-        obs, info = super().reset(**kwargs)
-        self.data.qpos[:N_JOINTS] *= 0.1
-        self.data.qvel[:N_JOINTS] *= 0.1
-        mujoco.mj_forward(self.model, self.data)
-
-        target_start_x = float(self.np_random.uniform(self.target_x_low, self.target_x_high))
-        for _ in range(150):
-            com_x, com_y = self._com_xy()
-            error = target_start_x - com_x
-            if abs(error) < 0.005:
-                break
-            self.data.qpos[1] = np.clip(self.data.qpos[1] + 0.04 * error,
-                                        self.fail_low[1] * 0.75, self.fail_high[1] * 0.75)
-            self.data.qpos[3] = np.clip(self.data.qpos[3] + 0.04 * error,
-                                        self.fail_low[3] * 0.75, self.fail_high[3] * 0.75)
-            mujoco.mj_forward(self.model, self.data)
-
-        com_x, com_y = self._com_xy()
-        self.trial_start_x = com_x
-        self.target_x = (float(self.fixed_target) if self.fixed_target is not None
-                          else float(self.np_random.uniform(self.target_x_low, self.target_x_high)))
-        com_x, com_y = self._com_xy()
-        self.prev_norm_dist = abs(com_x - self.target_x) / TARGET_SPAN
-        self.prev_com_x = com_x
-        return self._get_obs(), info
-
-    def step(self, action):
-        if self.disturb_prob > 0 and self.np_random.random() < self.disturb_prob:
-            self.data.xfrc_applied[self.trunk_body_id, 0] = self.np_random.uniform(*self.force_range)
-        else:
-            self.data.xfrc_applied[self.trunk_body_id, 0] = 0.0
-
-        self.do_simulation(action, self.frame_skip)
-        obs = self._get_obs()
-        q = self.data.qpos[:N_JOINTS].copy()
-
-        com_x, com_y = self._com_xy()
-        com_x_dot = (com_x - self.prev_com_x) / self.step_dt
-        self.prev_com_x = com_x
-        xcom_x = com_x + com_x_dot / self.omega0
-
-        safety_active = self._current_step >= self.safety_grace_steps
-        failed = bool(not np.isfinite(obs).all()
-                      or np.any(q < self.fail_low) or np.any(q > self.fail_high)
-                      or (safety_active and abs(xcom_x) > self.base_half_length))
-
-        norm_dist_raw = abs(com_x - self.target_x) / TARGET_SPAN
-        shaping_bonus = self.prev_norm_dist - norm_dist_raw
-        self.prev_norm_dist = norm_dist_raw
-        nd = min(norm_dist_raw, self.nd_cap)
-        h = 1.0 - nd
-
-        success = (abs(com_x - self.target_x) < self.eps_pos
-                   and abs(com_x_dot) < self.eps_vel and not failed)
-
-        ef_u = float(np.mean(np.square(action)))
-        energy = -self.omega * ef_u
-
-        stay_penalty = 0.0
-        if failed:
-            tracking = FAIL_BASE + FAIL_SLOPE * (1.0 - h)
-        elif self._current_step < TRACKING_DELAY_STEPS:
-            stay_penalty = abs(com_x - self.trial_start_x) / TARGET_SPAN
-            tracking = -self.stay_penalty_weight * stay_penalty
-        elif success:
-            tracking = SUCCESS_BONUS
-        else:
-            tracking = (1.0 - self.omega) * h
-
-        shaping = (self.shaping_weight * shaping_bonus) if (self.use_shaping and not failed and not success) else 0.0
-
-        instability = abs(com_x_dot / self.omega0) / self.base_half_length
-        safety = -self.safety_weight * instability
-
-        com_y_penalty = self.com_y_weight * (com_y / self.base_half_length) ** 2
-
-        # THE CHANGE: energy + safety scaled together by a_scale.
-        reward = tracking - com_y_penalty + shaping + self.a_scale * (energy + safety)
-        terminated = bool(failed)
-
-        self._current_step += 1
-        info = {"com_x": com_x, "com_y": com_y, "target_x": self.target_x, "h": h,
-                "xcom_x": xcom_x, "com_x_dot": com_x_dot, "failed": failed,
-                "success": success, "safety": safety, "com_y_penalty": com_y_penalty,
-                "stay_penalty": stay_penalty}
-        if self.render_mode == "human":
-            self.render()
-        return obs, reward, terminated, False, info
+FIXED_CFG = {
+    "candidate1": dict(env_cls=Candidate1Env, off_axis_weight=0.15),
+    "candidate2": dict(env_cls=Candidate2Env, safety_weight=0.15, off_axis_weight=0.30),
+    "candidate3": dict(env_cls=Candidate3Env, safety_weight=0.50, off_axis_weight=1.00),
+}
 
 
-def train_one(a_scale):
-    tag = f"candidate2_ap_ascale{a_scale:g}".replace(".", "")
+def make_env_instance(cfg, a_scale, **overrides):
+    mod = importlib.import_module(cfg["env_cls"].__module__)
+    mod.A_SCALE = a_scale
+    kwargs = {k: v for k, v in cfg.items() if k != "env_cls"}
+    kwargs.update(overrides)
+    return cfg["env_cls"](**kwargs)
+
+
+def train_one(candidate_name, a_scale, seed):
+    cfg = FIXED_CFG[candidate_name]
+    tag = f"{candidate_name}_ascale{a_scale:g}_s{seed}".replace(".", "")
     log_dir = f"./training_logs_{tag}/"
+    ckpt_dir = f"./checkpoints_{tag}/"
     os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    existing = sorted(
+        [f for f in os.listdir(ckpt_dir) if f.endswith(".zip")],
+        key=lambda f: int(f.split("_")[-2]) if f.split("_")[-2].isdigit() else 0
+    )
 
     def make_env(rank):
         def _f():
-            e = Candidate2EnvAScale(a_scale=a_scale, disturb_prob=0.1, force_range=(0, 30))
+            e = make_env_instance(cfg, a_scale, disturb_prob=0.1, force_range=(0, 30))
             e = TimeLimit(e, max_episode_steps=1000)
             e = Monitor(e, os.path.join(log_dir, f"monitor_{rank}"))
             return e
         return _f
 
-    N_ENVS = 8
+    N_ENVS = 4   # reduced from 8 -- fewer subprocess handles per run
     env = SubprocVecEnv([make_env(i) for i in range(N_ENVS)])
+    env.seed(int(seed))
     env = VecNormalize(env, norm_obs=False, norm_reward=False)
 
-    model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
-                learning_rate=3e-4, gamma=0.99, verbose=1)
-    model.learn(total_timesteps=3_000_000)
+    checkpoint_cb = CheckpointCallback(
+        save_freq=max(CHECKPOINT_FREQ // N_ENVS, 1),
+        save_path=ckpt_dir,
+        name_prefix="ckpt",
+        save_vecnormalize=True,
+    )
+
+    if existing:
+        latest = os.path.join(ckpt_dir, existing[-1])
+        print(f"Resuming from checkpoint: {latest}")
+        model = PPO.load(latest, env=env)
+        vecnorm_ckpt = latest.replace(".zip", "_vecnormalize.pkl")
+        if os.path.exists(vecnorm_ckpt):
+            env = VecNormalize.load(vecnorm_ckpt, env.venv)
+            model.set_env(env)
+        remaining = TRAIN_STEPS - model.num_timesteps
+        if remaining <= 0:
+            print("Checkpoint already at or past TRAIN_STEPS, skipping training.")
+        else:
+            print(f"Resuming: {model.num_timesteps} steps done, {remaining} remaining.")
+            model.learn(total_timesteps=remaining, callback=checkpoint_cb, reset_num_timesteps=False)
+    else:
+        model = PPO("MlpPolicy", env, n_steps=2048, batch_size=256, ent_coef=0.01,
+                    learning_rate=3e-4, gamma=0.99, verbose=1, seed=int(seed))
+        model.learn(total_timesteps=TRAIN_STEPS, callback=checkpoint_cb)
+
     model.save(f"ppo_{tag}")
     env.save(f"vecnormalize_{tag}.pkl")
     env.close()
-    print(f"Saved ppo_{tag} / vecnormalize_{tag}.pkl")
+    return tag
+
+
+def evaluate(tag, candidate_name, a_scale, n_eps=20):
+    cfg = FIXED_CFG[candidate_name]
+    model = PPO.load(f"ppo_{tag}")
+    errors, ap_ptp, wrong_side = [], [], 0
+    for ep in range(n_eps):
+        def _f():
+            e = make_env_instance(cfg, a_scale)
+            return TimeLimit(e, max_episode_steps=1000)
+        venv = DummyVecEnv([_f])
+        venv = VecNormalize.load(f"vecnormalize_{tag}.pkl", venv)
+        venv.training = False
+        venv.norm_reward = False
+        venv.seed(ep)
+        obs = venv.reset()
+        done, ap_trace = False, []
+        while not done:
+            a, _ = model.predict(obs, deterministic=True)
+            obs, _, d, info = venv.step(a)
+            done = bool(d[0])
+            ap_trace.append(float(info[0]["com_x"]))
+        i = info[0]
+        errors.append(abs(i["com_y"] - i["target_y"]))
+        ap_ptp.append(float(np.ptp(ap_trace)))
+        if np.sign(i["com_y"]) != np.sign(i["target_y"]):
+            wrong_side += 1
+        venv.close()
+    return (float(np.mean(errors)), float(np.mean(ap_ptp)), wrong_side,
+            sum(1 for e in errors if e < EPS_POS))
 
 
 if __name__ == "__main__":
-    for a_scale in ASCALE_VALUES:
-        print(f"\n=== Training A_SCALE={a_scale} ===")
-        train_one(a_scale)
-    print("\nAll three A_SCALE models trained. Next: run compare_resync_comy.py-style")
-    print("comparison on each (ppo_candidate2_ap_ascale1/2/4) against the human data,")
-    print("using the same FIXED_TARGET=0.1069 already established.")
+    p = argparse.ArgumentParser()
+    p.add_argument("--candidate", required=True, choices=list(FIXED_CFG.keys()))
+    p.add_argument("--a_value", type=float, required=True)
+    p.add_argument("--seed", type=int, required=True)
+    p.add_argument("--eval_only", action="store_true",
+                   help="Skip training, only evaluate an already-saved model.")
+    args = p.parse_args()
+
+    tag = f"{args.candidate}_ascale{args.a_value:g}_s{args.seed}".replace(".", "")
+
+    if not args.eval_only:
+        print(f"\n=== {args.candidate}, A_SCALE={args.a_value}, seed={args.seed} ===")
+        tag = train_one(args.candidate, args.a_value, args.seed)
+
+    err, ap, wrong, hit = evaluate(tag, args.candidate, args.a_value)
+    print(f"\nRESULT  a={args.a_value} seed={args.seed}: "
+          f"err={err:.4f}  AP_p-p={ap:.4f}  wrong={wrong}/20  hit={hit}/20")
+    print(f"\nRecord this line manually -- each invocation runs one")
+    print(f"combination only, no automatic aggregation across runs.")
